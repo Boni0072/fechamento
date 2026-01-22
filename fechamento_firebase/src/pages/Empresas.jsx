@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getFirestore, doc, updateDoc, onSnapshot } from 'firebase/firestore';
+import { getFirestore, doc, updateDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { checkPermission } from './permissionUtils';
@@ -250,10 +250,10 @@ export default function Empresas() {
         throw new Error('Não foi possível obter os dados da planilha. Verifique se o ID está correto e se a planilha é pública (Qualquer pessoa com o link).');
       }
 
-      await updateDoc(doc(db, 'tenants', configEmpresa.id), {
+      await setDoc(doc(db, 'tenants', configEmpresa.id), {
         spreadsheetId: spreadsheetId.trim(),
         tabelaGoogle: dadosTabela
-      });
+      }, { merge: true });
       
       setShowConfigModal(false);
       setConfigEmpresa(null);
@@ -297,7 +297,7 @@ export default function Empresas() {
 
       const db = getFirestore();
       // Atualiza o cache no Firebase
-      await updateDoc(doc(db, 'tenants', empresa.id), { tabelaGoogle: dadosTabela });
+      await setDoc(doc(db, 'tenants', empresa.id), { tabelaGoogle: dadosTabela }, { merge: true });
     } catch (err) {
       console.error("Erro na sincronização:", err);
       setError(`Erro na sincronização: ${err.message}`);
@@ -314,10 +314,10 @@ export default function Empresas() {
     setError('');
     try {
       const db = getFirestore();
-      await updateDoc(doc(db, 'tenants', configEmpresa.id), {
+      await setDoc(doc(db, 'tenants', configEmpresa.id), {
         spreadsheetId: null,
         tabelaGoogle: null
-      });
+      }, { merge: true });
       
       setSpreadsheetId('');
       setSheetData([]);
