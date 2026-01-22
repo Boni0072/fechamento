@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { auth, loginWithGoogle, logout, onAuthChange } from '../services/firebase';
-import { criarEmpresa, getEmpresas, getUsuario } from '../services/database';
+import { getFirestore, doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { criarEmpresa, getEmpresas } from '../services/database';
 
 const AuthContext = createContext();
 
@@ -13,44 +14,106 @@ export const AuthProvider = ({ children }) => {
   const [empresas, setEmpresas] = useState([]);
 
   useEffect(() => {
-    const unsubscribe = onAuthChange(async (firebaseUser) => {
-      if (firebaseUser) {
-        // Fetch additional user data from Realtime Database
-        const unsubscribeDb = getUsuario(firebaseUser.uid, (dbUserData) => {
-          setUser({
-            id: firebaseUser.uid,
-            email: firebaseUser.email,
-            name: firebaseUser.displayName,
-            photoURL: firebaseUser.photoURL,
-            ...dbUserData // Merge database user data
-          });
-          setLoading(false);
-        });
-        return () => unsubscribeDb(); // Cleanup for db listener
-      } else {
+    const unsubscribeAuth = onAuthChange((firebaseUser) => {
+      if (!firebaseUser) {
         setUser(null);
         setEmpresaAtual(null);
         setEmpresas([]);
         setLoading(false);
+      } else {
+        // Firebase Auth data is the base
+        const baseUser = {
+          id: firebaseUser.uid,
+          email: firebaseUser.email,
+          name: firebaseUser.displayName,
+          photoURL: firebaseUser.photoURL,
+        };
+        // We set a base user object first, but loading is still true
+        // until we get the profile from Firestore
+        setUser(baseUser); 
       }
     });
 
-    return () => unsubscribe();
+    return () => unsubscribeAuth();
   }, []);
 
-  // Carregar empresas quando usuário logar
+  // Effect to get user profile from Firestore when user or company changes
   useEffect(() => {
-    if (user) {
+    if (user?.id && empresaAtual?.id) {
+      setLoading(true); // Start loading profile data
+      const db = getFirestore();
+      const userProfileRef = doc(db, 'tenants', empresaAtual.id, 'usuarios', user.id);
+      
+      const unsubscribeProfile = onSnapshot(userProfileRef, (snapshot) => {
+        if (snapshot.exists()) {
+          const profileData = snapshot.data();
+          // Merge auth data with firestore profile data.
+          // IMPORTANTE: Recriamos o objeto com base nos dados de Auth para garantir
+          // que não sobrem permissões antigas (stale data) de outras empresas.
+          setUser(prevUser => ({
+            id: prevUser.id,
+            email: prevUser.email,
+            name: prevUser.name,
+            photoURL: prevUser.photoURL,
+            ...profileData, // Aqui entram as permissões/páginas do Firestore
+          }));
+        } else {
+          // Handle case where user exists in Auth but not in the tenant's user list
+          console.warn(`Perfil não encontrado. Criando perfil padrão em: tenants/${empresaAtual.id}/usuarios/${user.id}`);
+          
+          // Verifica se o usuário é o dono da empresa para dar permissão Master
+          const isOwner = empresaAtual?.ownerId === user.id;
+          const defaultRole = isOwner ? 'Master' : 'Admin';
+
+          // Auto-correção: Cria o perfil se não existir para liberar o acesso
+          setDoc(userProfileRef, {
+            email: user.email,
+            name: user.name,
+            role: 'admin',
+            perfilAcesso: defaultRole, // Define Master se for o dono, senão Admin
+            paginasAcesso: ['dashboard', 'empresas', 'etapas', 'importacao', 'relatorios', 'historico', 'cadastros', 'notificacoes', 'fluxograma', 'usuarios'],
+            createdAt: new Date().toISOString()
+          }).catch(err => console.error("Erro ao criar perfil automático:", err));
+
+          // Resetamos para o usuário base para remover permissões antigas se o perfil não existir
+          setUser(prevUser => ({
+            id: prevUser.id,
+            email: prevUser.email,
+            name: prevUser.name,
+            photoURL: prevUser.photoURL,
+          }));
+        }
+        setLoading(false); // Finish loading after getting profile
+      }, (error) => {
+        console.error("Erro ao buscar perfil do usuário no Firestore:", error);
+        setLoading(false);
+      });
+
+      return () => unsubscribeProfile();
+    }
+
+  }, [user?.id, empresaAtual?.id]); // Depend on user.id and empresaAtual.id
+
+  // Load companies when user logs in
+  useEffect(() => {
+    if (user?.id) {
       const unsubscribe = getEmpresas(user.id, (empresasData) => {
         setEmpresas(empresasData);
-        // Selecionar primeira empresa se não houver selecionada
-        if (!empresaAtual && empresasData.length > 0) {
+        const savedEmpresaId = localStorage.getItem('empresaAtualId');
+        const savedEmpresa = empresasData.find(e => e.id === savedEmpresaId);
+
+        if (savedEmpresa) {
+          setEmpresaAtual(savedEmpresa);
+        } else if (empresasData.length > 0) {
           setEmpresaAtual(empresasData[0]);
+        } else {
+          setEmpresaAtual(null);
+          setLoading(false); // No companies, nothing more to load
         }
       });
       return () => unsubscribe();
     }
-  }, [user]);
+  }, [user?.id]);
 
   const handleLogin = async () => {
     try {
@@ -67,6 +130,7 @@ export const AuthProvider = ({ children }) => {
       setUser(null);
       setEmpresaAtual(null);
       setEmpresas([]);
+      localStorage.removeItem('empresaAtualId');
     } catch (error) {
       console.error('Erro ao fazer logout:', error);
       throw error;
@@ -76,12 +140,31 @@ export const AuthProvider = ({ children }) => {
   const handleCriarEmpresa = async (dados) => {
     if (!user) return;
     const empresaId = await criarEmpresa(user.id, dados);
+    
+    // Garante que o perfil do criador seja criado no Firestore com permissão Master imediatamente
+    if (empresaId) {
+      const db = getFirestore();
+      const userProfileRef = doc(db, 'tenants', empresaId, 'usuarios', user.id);
+      await setDoc(userProfileRef, {
+        email: user.email,
+        name: user.name || user.email.split('@')[0],
+        cargo: 'Dono',
+        perfilAcesso: 'Master',
+        paginasAcesso: ['dashboard', 'empresas', 'etapas', 'importacao', 'relatorios', 'historico', 'cadastros', 'notificacoes', 'fluxograma', 'usuarios'],
+        createdAt: new Date().toISOString()
+      }, { merge: true });
+    }
+    
     return empresaId;
   };
 
   const selecionarEmpresa = (empresa) => {
     setEmpresaAtual(empresa);
-    localStorage.setItem('empresaAtualId', empresa.id);
+    if (empresa) {
+      localStorage.setItem('empresaAtualId', empresa.id);
+    } else {
+      localStorage.removeItem('empresaAtualId');
+    }
   };
 
   const value = {

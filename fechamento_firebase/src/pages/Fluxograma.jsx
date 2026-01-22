@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getDatabase, ref, onValue, set, push, remove } from 'firebase/database';
+import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { getPeriodos, getEtapas, getStatusColor, getStatusLabel, atualizarEtapa } from '../services/database';
@@ -8,11 +9,38 @@ import { format, getDaysInMonth, addDays } from 'date-fns';
 import { X, Check, Clock, AlertTriangle, ChevronDown, ChevronUp, CalendarOff, RefreshCw, Calendar } from 'lucide-react';
 import TimelineBackground from './TimelineBackground';
 import * as XLSX from 'xlsx';
+import { checkPermission } from './permissionUtils';
 
 export default function Fluxograma() {
   const navigate = useNavigate();
   const { empresaAtual } = useAuth();
-  const { loading: loadingPermissoes, autorizado, user } = usePermissao('fluxograma');
+  const { loading: loadingPermissoes, user: authUser } = usePermissao('fluxograma');
+  const [userProfile, setUserProfile] = useState(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
+
+  useEffect(() => {
+    if (authUser?.id && empresaAtual?.id) {
+      setLoadingProfile(true);
+      const db = getFirestore();
+      const userRef = doc(db, 'tenants', empresaAtual.id, 'usuarios', authUser.id);
+      const unsubscribe = onSnapshot(userRef, (snapshot) => {
+        const data = snapshot.data();
+        if (!data) {
+          console.warn(`Fluxograma: Perfil não encontrado em tenants/${empresaAtual.id}/usuarios/${authUser.id}`);
+        }
+        setUserProfile(data ? { ...authUser, ...data } : { ...authUser, perfilIncompleto: true });
+        setLoadingProfile(false);
+      });
+      return () => unsubscribe();
+    } else {
+      if (authUser) setUserProfile(authUser);
+      setLoadingProfile(false);
+    }
+  }, [authUser, empresaAtual]);
+
+  // Restrição removida
+  const autorizado = true;
+
   const [periodos, setPeriodos] = useState([]);
   const [periodoSelecionado, setPeriodoSelecionado] = useState(null);
   const [etapas, setEtapas] = useState([]);
@@ -35,11 +63,14 @@ export default function Fluxograma() {
       return;
     }
 
-    // Busca dados atualizados da empresa em tempo real (para garantir que temos o spreadsheetId mais recente)
-    const db = getDatabase();
-    const empresaRef = ref(db, `tenants/${empresaAtual.id}`);
-    const unsubEmpresa = onValue(empresaRef, (snapshot) => {
-      setEmpresaDados({ id: empresaAtual.id, ...snapshot.val() });
+    // Busca dados atualizados da empresa no Firestore (onde o spreadsheetId é salvo)
+    const db = getFirestore();
+    const empresaRef = doc(db, 'tenants', empresaAtual.id);
+    const unsubEmpresa = onSnapshot(empresaRef, (snapshot) => {
+      const data = snapshot.data();
+      if (data) {
+        setEmpresaDados({ id: empresaAtual.id, ...data });
+      }
     });
 
     const unsubscribe = getPeriodos(empresaAtual.id, (data) => {
@@ -85,7 +116,7 @@ export default function Fluxograma() {
     return () => unsubscribe();
   }, [empresaAtual, periodoSelecionado]);
 
-  if (loadingPermissoes) {
+  if (loadingPermissoes || loadingProfile || (authUser && !userProfile) || (userProfile && !userProfile.perfilAcesso && !userProfile.perfilIncompleto)) {
     return (
       <div className="flex flex-col items-center justify-center h-96">
         <p className="text-slate-500">Carregando permissões...</p>
@@ -93,10 +124,10 @@ export default function Fluxograma() {
     );
   }
 
-  if (!autorizado) {
+  if (!empresaAtual) {
     return (
       <div className="flex flex-col items-center justify-center h-96">
-        <p className="text-slate-500">Acesso não autorizado.</p>
+        <p className="text-slate-500">Selecione uma empresa para visualizar o fluxograma</p>
       </div>
     );
   }
@@ -107,8 +138,8 @@ export default function Fluxograma() {
       periodoSelecionado.id,
       etapa.id,
       { ...etapa, status: 'concluido', dataReal: new Date().toISOString().split('T')[0] },
-      user.id,
-      user.name
+      userProfile.id,
+      userProfile.nome || userProfile.name
     );
   };
 
@@ -209,14 +240,6 @@ export default function Fluxograma() {
     } finally {
       setSyncing(false);
     }
-  };
-
-  if (!empresaAtual) {
-    return (
-      <div className="flex flex-col items-center justify-center h-96">
-        <p className="text-slate-500">Selecione uma empresa para visualizar o fluxograma</p>
-      </div>
-    );
   }
 
   let dataInicio = new Date();

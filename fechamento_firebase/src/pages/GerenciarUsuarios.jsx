@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
+// Imports limpos
 import { getApp, initializeApp, deleteApp } from 'firebase/app';
-import { getAuth, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
-import { getDatabase, ref, update, remove, set, onValue } from 'firebase/database';
-import { User, Camera, Pencil, Trash2, Eye, EyeOff } from 'lucide-react';
+import { getAuth, createUserWithEmailAndPassword, sendPasswordResetEmail, signOut } from 'firebase/auth';
+import { getFirestore, collection, doc, updateDoc, deleteDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { User, Camera, Pencil, Trash2, Eye, EyeOff, LogOut } from 'lucide-react';
 import { usePermissao } from '../hooks/usePermissao'; // Importar o hook de permissão
 import { useAuth } from '../contexts/AuthContext';
+import { checkPermission } from './permissionUtils';
 
 const PAGINAS_DISPONIVEIS = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -19,9 +21,79 @@ const PAGINAS_DISPONIVEIS = [
   { id: 'usuarios', label: 'Usuários' }
 ];
 
+// Função auxiliar para redimensionar imagem
+const resizeImage = (file) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_WIDTH = 300;
+        const MAX_HEIGHT = 300;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height;
+            height = MAX_HEIGHT;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.7));
+      };
+      img.onerror = (error) => reject(error);
+    };
+    reader.onerror = (error) => reject(error);
+  });
+};
+
+// Validação de força de senha
+const validarSenhaForte = (senha) => {
+  if (senha.length < 6) return "A senha deve ter pelo menos 6 caracteres.";
+  if (!/\d/.test(senha)) return "A senha deve conter pelo menos um número.";
+  if (!/[a-zA-Z]/.test(senha)) return "A senha deve conter pelo menos uma letra.";
+  return null;
+};
+
 const GerenciarUsuarios = () => {
   const { empresaAtual } = useAuth();
-  const { loading: permissaoLoading, autorizado } = usePermissao('usuarios'); // Usar o hook de permissão
+  const { loading: permissaoLoading, user: authUser } = usePermissao('usuarios');
+  const [userProfile, setUserProfile] = useState(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
+
+  useEffect(() => {
+    if (!authUser?.id || !empresaAtual?.id) {
+      setLoadingProfile(false);
+      return;
+    }
+
+    setLoadingProfile(true);
+    const db = getFirestore();
+    const userRef = doc(db, 'tenants', empresaAtual.id, 'usuarios', authUser.id);
+    const unsubscribe = onSnapshot(userRef, (snapshot) => {
+      const data = snapshot.data();
+      setUserProfile(data ? { ...authUser, ...data } : authUser);
+      setLoadingProfile(false);
+    });
+    return () => unsubscribe();
+  }, [authUser, empresaAtual]);
+
+  // Restrição removida
+  const autorizado = true;
+
   const [usuarios, setUsuarios] = useState([]);
   const [loading, setLoading] = useState(true);
   const [exibirModal, setExibirModal] = useState(false);
@@ -41,13 +113,15 @@ const GerenciarUsuarios = () => {
   const [mostrarSenha, setMostrarSenha] = useState(false);
 
   useEffect(() => {
-    if (!permissaoLoading && autorizado && empresaAtual) { // Só buscar usuários se estiver autorizado e com empresa
+    if (!permissaoLoading && !loadingProfile && autorizado && empresaAtual?.id) { // Só buscar usuários se estiver autorizado e com empresa
       // Busca a lista de usuários em tempo real
-      const db = getDatabase();
-      const usuariosRef = ref(db, `tenants/${empresaAtual.id}/usuarios`);
-      const unsubscribe = onValue(usuariosRef, (snapshot) => {
-        const data = snapshot.val();
-        const listaUsuarios = data ? Object.entries(data).map(([uid, val]) => ({ uid, ...val })) : [];
+      const db = getFirestore();
+      const usuariosRef = collection(db, 'tenants', empresaAtual.id, 'usuarios');
+      const unsubscribe = onSnapshot(usuariosRef, (snapshot) => {
+        const listaUsuarios = [];
+        snapshot.forEach((doc) => {
+          listaUsuarios.push({ uid: doc.id, ...doc.data() });
+        });
         setUsuarios(listaUsuarios);
         setLoading(false);
       });
@@ -55,7 +129,7 @@ const GerenciarUsuarios = () => {
     } else if (!permissaoLoading && !autorizado) {
       setLoading(false); // Parar de carregar se não autorizado
     }
-  }, [permissaoLoading, autorizado, empresaAtual]);
+  }, [permissaoLoading, loadingProfile, autorizado, empresaAtual]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -64,7 +138,7 @@ const GerenciarUsuarios = () => {
 
   const handlePaginaChange = (paginaId) => {
     setDados(prev => {
-      const paginas = prev.paginasAcesso || [];
+      const paginas = Array.isArray(prev.paginasAcesso) ? prev.paginasAcesso : [];
       if (paginas.includes(paginaId)) {
         return { ...prev, paginasAcesso: paginas.filter(id => id !== paginaId) };
       } else {
@@ -102,12 +176,22 @@ const GerenciarUsuarios = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!empresaAtual) return;
+    if (!empresaAtual?.id) return;
     setMensagem({ tipo: 'info', texto: modoEdicao ? 'Atualizando usuário...' : 'Criando usuário...' });
+
+    // Validação de senha (se fornecida)
+    if (dados.senha) {
+      const erroSenha = validarSenhaForte(dados.senha);
+      if (erroSenha) {
+        setMensagem({ tipo: 'erro', texto: erroSenha });
+        return;
+      }
+    }
 
     try {
       if (modoEdicao) {
-        const db = getDatabase();
-        const usuarioRef = ref(db, `tenants/${empresaAtual.id}/usuarios/${usuarioEditandoId}`);
+        const db = getFirestore();
+        const usuarioRef = doc(db, 'tenants', empresaAtual.id, 'usuarios', usuarioEditandoId);
         
         const dadosAtualizacao = {
           nome: dados.nome,
@@ -123,7 +207,7 @@ const GerenciarUsuarios = () => {
           dadosAtualizacao.senha = dados.senha;
         }
 
-        await update(usuarioRef, dadosAtualizacao);
+        await updateDoc(usuarioRef, dadosAtualizacao);
         setMensagem({ tipo: 'sucesso', texto: 'Usuário atualizado com sucesso!' });
       } else {
         // Cria uma instância secundária para não deslogar o admin atual
@@ -135,8 +219,8 @@ const GerenciarUsuarios = () => {
           const userCredential = await createUserWithEmailAndPassword(secondaryAuth, dados.email, dados.senha);
           const user = userCredential.user;
 
-          const db = getDatabase();
-          await set(ref(db, `tenants/${empresaAtual.id}/usuarios/${user.uid}`), {
+          const db = getFirestore();
+          await setDoc(doc(db, 'tenants', empresaAtual.id, 'usuarios', user.uid), {
             nome: dados.nome,
             email: dados.email,
             cargo: dados.cargo,
@@ -197,11 +281,11 @@ const GerenciarUsuarios = () => {
   };
 
   const handleExcluir = async (uid) => {
-    if (window.confirm('Tem certeza que deseja excluir este usuário?')) {
+    if (window.confirm('Tem certeza que deseja excluir este usuário?') && empresaAtual?.id) {
       try {
-        const db = getDatabase();
-        const usuarioRef = ref(db, `tenants/${empresaAtual.id}/usuarios/${uid}`);
-        await remove(usuarioRef);
+        const db = getFirestore();
+        const usuarioRef = doc(db, 'tenants', empresaAtual.id, 'usuarios', uid);
+        await deleteDoc(usuarioRef);
         setMensagem({ tipo: 'sucesso', texto: 'Usuário excluído com sucesso!' });
       } catch (error) {
         console.error("Erro ao excluir:", error);
@@ -210,18 +294,16 @@ const GerenciarUsuarios = () => {
     }
   };
 
-  if (loading || permissaoLoading) return <div className="flex justify-center p-8">Carregando...</div>;
+  const handleLogout = async () => {
+    try {
+      const auth = getAuth();
+      await signOut(auth);
+    } catch (error) {
+      console.error("Erro ao sair:", error);
+    }
+  };
 
-  if (!autorizado) {
-    return (
-      <div className="flex justify-center items-center h-screen bg-gray-100">
-        <div className="text-center p-8 bg-white rounded-lg shadow-md">
-          <h2 className="text-2xl font-bold text-red-600 mb-4">Acesso Negado</h2>
-          <p className="text-gray-700">Você não tem permissão para acessar esta página.</p>
-        </div>
-      </div>
-    );
-  }
+  if (loading || permissaoLoading || loadingProfile || (authUser && !userProfile)) return <div className="flex justify-center p-8">Carregando...</div>;
 
   if (!empresaAtual) {
     return (
@@ -238,27 +320,42 @@ const GerenciarUsuarios = () => {
           <img src="/contabil.png" alt="Logo Contábil" className="w-36 h-36 object-contain" />
           <h1 className="text-2xl font-bold text-gray-800">Gerenciar Usuários</h1>
         </div>
-        <button
-          onClick={() => {
-            setModoEdicao(false);
-            setUsuarioEditandoId(null);
-            setDados({
-              nome: '',
-              email: '',
-              senha: '',
-              cargo: '',
-              telefone: '',
-              perfilAcesso: 'Usuário',
-              paginasAcesso: []
-            });
-            setAvatarPreview(null);
-            setMostrarSenha(false);
-            setExibirModal(true);
-          }}
-          className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors flex items-center shadow-sm"
-        >
-          <span className="mr-2 text-xl font-bold">+</span> Adicionar Usuário
-        </button>
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-3 border-r pr-6 border-gray-200">
+            <div className="text-right hidden sm:block">
+              <p className="text-sm font-medium text-gray-900">{userProfile?.nome || userProfile?.name || userProfile?.email}</p>
+              <p className="text-xs text-gray-500">{userProfile?.perfilAcesso || 'Usuário'}</p>
+            </div>
+            <button 
+              onClick={handleLogout}
+              className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-all"
+              title="Sair do sistema"
+            >
+              <LogOut className="w-5 h-5" />
+            </button>
+          </div>
+          <button
+            onClick={() => {
+              setModoEdicao(false);
+              setUsuarioEditandoId(null);
+              setDados({
+                nome: '',
+                email: '',
+                senha: '',
+                cargo: '',
+                telefone: '',
+                perfilAcesso: 'Usuário',
+                paginasAcesso: []
+              });
+              setAvatarPreview(null);
+              setMostrarSenha(false);
+              setExibirModal(true);
+            }}
+            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors flex items-center shadow-sm"
+          >
+            <span className="mr-2 text-xl font-bold">+</span> Adicionar Usuário
+          </button>
+        </div>
       </div>
 
       {mensagem.texto && (
@@ -453,7 +550,7 @@ const GerenciarUsuarios = () => {
                       <label key={pagina.id} className="flex items-center space-x-2 cursor-pointer">
                         <input
                           type="checkbox"
-                          checked={dados.paginasAcesso?.includes(pagina.id)}
+                          checked={Array.isArray(dados.paginasAcesso) && dados.paginasAcesso.includes(pagina.id)}
                           onChange={() => handlePaginaChange(pagina.id)}
                           className="rounded text-blue-600 focus:ring-blue-500 h-4 w-4 border-gray-300"
                         />
@@ -488,41 +585,3 @@ const GerenciarUsuarios = () => {
 };
 
 export default GerenciarUsuarios;
-
-const resizeImage = (file) => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = (event) => {
-      const img = new Image();
-      img.src = event.target.result;
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 300;
-        const MAX_HEIGHT = 300;
-        let width = img.width;
-        let height = img.height;
-
-        if (width > height) {
-          if (width > MAX_WIDTH) {
-            height *= MAX_WIDTH / width;
-            width = MAX_WIDTH;
-          }
-        } else {
-          if (height > MAX_HEIGHT) {
-            width *= MAX_HEIGHT / height;
-            height = MAX_HEIGHT;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.7));
-      };
-      img.onerror = (error) => reject(error);
-    };
-    reader.onerror = (error) => reject(error);
-  });
-};

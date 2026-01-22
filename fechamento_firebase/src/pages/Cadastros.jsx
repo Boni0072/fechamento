@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { 
@@ -8,16 +9,37 @@ import {
   getTemplates, criarTemplate, deletarTemplate
 } from '../services/database';
 import { Plus, Trash2, Calendar, Users, FolderTree, FileText } from 'lucide-react';
+import { checkPermission } from './permissionUtils';
 
 export default function Cadastros() {
   const { empresaAtual } = useAuth();
-  const { loading: loadingPermissoes, autorizado, user } = usePermissao('cadastros');
+  const { loading: loadingPermissoes, user: authUser } = usePermissao('cadastros');
+  const [userProfile, setUserProfile] = useState(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
   const [tab, setTab] = useState('periodos');
   
   const [periodos, setPeriodos] = useState([]);
   const [areas, setAreas] = useState([]);
   const [responsaveis, setResponsaveis] = useState([]);
   const [templates, setTemplates] = useState([]);
+
+  useEffect(() => {
+    if (authUser?.id && empresaAtual?.id) {
+      const db = getFirestore();
+      const userRef = doc(db, 'tenants', empresaAtual.id, 'usuarios', authUser.id);
+      const unsubscribe = onSnapshot(userRef, (snapshot) => {
+        const data = snapshot.data();
+        setUserProfile(data ? { ...authUser, ...data } : authUser);
+        setLoadingProfile(false);
+      });
+      return () => unsubscribe();
+    } else {
+      setLoadingProfile(false);
+    }
+  }, [authUser, empresaAtual]);
+
+  // Restrição removida
+  const autorizado = true;
 
   useEffect(() => {
     if (!empresaAtual) return;
@@ -35,18 +57,10 @@ export default function Cadastros() {
     };
   }, [empresaAtual]);
 
-  if (loadingPermissoes) {
+  if (loadingPermissoes || loadingProfile) {
     return (
       <div className="flex flex-col items-center justify-center h-96">
         <p className="text-slate-500">Carregando permissões...</p>
-      </div>
-    );
-  }
-
-  if (!autorizado) {
-    return (
-      <div className="flex flex-col items-center justify-center h-96">
-        <p className="text-slate-500">Acesso não autorizado.</p>
       </div>
     );
   }
@@ -55,6 +69,14 @@ export default function Cadastros() {
     return (
       <div className="flex flex-col items-center justify-center h-96">
         <p className="text-slate-500">Selecione uma empresa para gerenciar cadastros</p>
+      </div>
+    );
+  }
+
+  if (!autorizado) {
+    return (
+      <div className="flex flex-col items-center justify-center h-96">
+        <p className="text-slate-500">Acesso não autorizado.</p>
       </div>
     );
   }

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { getDatabase, ref, update, onValue } from 'firebase/database';
+import { getFirestore, doc, updateDoc, onSnapshot } from 'firebase/firestore';
+import { updateEmail, updatePassword } from 'firebase/auth';
 import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -49,6 +50,8 @@ const PerfilUsuario = () => {
   const [dados, setDados] = useState({
     nome: '',
     email: '',
+    novaSenha: '',
+    confirmarSenha: '',
     cargo: '',
     telefone: '',
     perfilAcesso: 'Usuário', // Valor padrão caso não esteja definido
@@ -63,13 +66,13 @@ const PerfilUsuario = () => {
     if (user && empresaAtual) {
       // Busca dados adicionais do usuário no Realtime Database (dentro do Tenant)
       try {
-        const db = getDatabase();
+        const db = getFirestore();
         // MUDANÇA AQUI: Caminho agora inclui o ID da empresa (tenant)
-        const userRef = ref(db, `tenants/${empresaAtual.id}/usuarios/${user.uid}`);
+        const userRef = doc(db, 'tenants', empresaAtual.id, 'usuarios', user.id);
         
         // Atribui a função de limpeza à variável externa
-        unsubscribeDb = onValue(userRef, (snapshot) => {
-          const userData = snapshot.val();
+        unsubscribeDb = onSnapshot(userRef, (docSnap) => {
+          const userData = docSnap.data();
           if (userData) {
             setDados(prev => ({
               ...prev,
@@ -130,20 +133,43 @@ const PerfilUsuario = () => {
     e.preventDefault();
     if (!user || !empresaAtual) return;
 
+    if (dados.novaSenha && dados.novaSenha !== dados.confirmarSenha) {
+      setMensagem({ tipo: 'erro', texto: 'As senhas não coincidem.' });
+      return;
+    }
+
     try {
       setMensagem({ tipo: 'info', texto: 'Salvando alterações...' });
       
       // Atualiza os dados no Realtime Database
-      const db = getDatabase();
+      const db = getFirestore();
       // MUDANÇA AQUI: Salva no caminho do tenant
-      const usuarioRef = ref(db, `tenants/${empresaAtual.id}/usuarios/${user.uid}`);
-      await update(usuarioRef, {
+      const usuarioRef = doc(db, 'tenants', empresaAtual.id, 'usuarios', user.id);
+      
+      const updates = {
         nome: dados.nome,
+        email: dados.email, // Atualiza email no banco também
         cargo: dados.cargo,
         telefone: dados.telefone,
         avatar: dados.avatar
         // O perfilAcesso geralmente não é editado pelo próprio usuário
-      });
+      };
+
+      // 1. Atualizar Email no Firebase Auth (se mudou)
+      if (dados.email !== user.email) {
+        await updateEmail(user, dados.email);
+      }
+
+      // 2. Atualizar Senha no Firebase Auth (se fornecida)
+      if (dados.novaSenha) {
+        await updatePassword(user, dados.novaSenha);
+      }
+
+      // 3. Atualizar Dados no Realtime Database
+      await updateDoc(usuarioRef, updates);
+
+      // Limpar campos de senha
+      setDados(prev => ({ ...prev, novaSenha: '', confirmarSenha: '' }));
 
       setMensagem({ tipo: 'sucesso', texto: 'Perfil atualizado com sucesso!' });
       
@@ -151,7 +177,15 @@ const PerfilUsuario = () => {
       setTimeout(() => setMensagem({ tipo: '', texto: '' }), 3000);
     } catch (error) {
       console.error("Erro ao atualizar perfil:", error);
-      setMensagem({ tipo: 'erro', texto: 'Erro ao salvar as alterações.' });
+      let msg = 'Erro ao salvar as alterações.';
+      if (error.code === 'auth/requires-recent-login') {
+        msg = 'Para alterar email ou senha, faça login novamente.';
+      } else if (error.code === 'auth/email-already-in-use') {
+        msg = 'Este email já está em uso.';
+      } else if (error.code === 'auth/weak-password') {
+        msg = 'A senha deve ter pelo menos 6 caracteres.';
+      }
+      setMensagem({ tipo: 'erro', texto: msg });
     }
   };
 
@@ -239,11 +273,11 @@ const PerfilUsuario = () => {
             <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
             <input
               type="email"
+              name="email"
               value={dados.email}
-              disabled
-              className="w-full p-2 border border-gray-200 rounded-md bg-gray-50 text-gray-500 cursor-not-allowed"
+              onChange={handleChange}
+              className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
-            <p className="text-xs text-gray-500 mt-1">O email não pode ser alterado.</p>
           </div>
 
           <div>
@@ -268,6 +302,34 @@ const PerfilUsuario = () => {
               className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               placeholder="(00) 00000-0000"
             />
+          </div>
+        </div>
+
+        <div className="border-t pt-4 mt-2">
+          <h3 className="text-lg font-medium text-gray-800 mb-4">Alterar Senha</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Nova Senha</label>
+              <input
+                type="password"
+                name="novaSenha"
+                value={dados.novaSenha}
+                onChange={handleChange}
+                className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="Deixe em branco para manter a atual"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Confirmar Nova Senha</label>
+              <input
+                type="password"
+                name="confirmarSenha"
+                value={dados.confirmarSenha}
+                onChange={handleChange}
+                className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="Repita a nova senha"
+              />
+            </div>
           </div>
         </div>
 

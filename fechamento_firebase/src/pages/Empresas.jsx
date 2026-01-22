@@ -1,13 +1,37 @@
 import { useState, useEffect } from 'react';
-import { getDatabase, ref, update, onValue } from 'firebase/database';
+import { getFirestore, doc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
+import { checkPermission } from './permissionUtils';
 import { Plus, Building2, Check, FileSpreadsheet, RefreshCw, Trash2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 export default function Empresas() {
   const { empresas, empresaAtual, selecionarEmpresa, criarEmpresa } = useAuth();
-  const { loading: loadingPermissoes, autorizado, user } = usePermissao('empresas');
+  const { loading: loadingPermissoes, user: authUser } = usePermissao('empresas');
+  const [userProfile, setUserProfile] = useState(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
+
+  useEffect(() => {
+    if (authUser?.id && empresaAtual?.id) {
+      setLoadingProfile(true);
+      const db = getFirestore();
+      const userRef = doc(db, 'tenants', empresaAtual.id, 'usuarios', authUser.id);
+      const unsubscribe = onSnapshot(userRef, (snapshot) => {
+        const data = snapshot.data();
+        setUserProfile(data ? { ...authUser, ...data } : authUser);
+        setLoadingProfile(false);
+      });
+      return () => unsubscribe();
+    } else {
+      setLoadingProfile(false);
+    }
+  }, [authUser, empresaAtual]);
+
+  // Se não tem empresa selecionada, permite acesso para selecionar. Se tem, verifica permissão.
+  // Restrição removida
+  const autorizado = true;
+
   const [showModal, setShowModal] = useState(false);
   const [nome, setNome] = useState('');
   const [cnpj, setCnpj] = useState('');
@@ -66,11 +90,11 @@ export default function Empresas() {
   // MOVIDO PARA O TOPO para evitar erro de "Rendered more hooks"
   useEffect(() => {
     if (showConfigModal && configEmpresa?.id) {
-      const db = getDatabase();
-      const empresaRef = ref(db, `tenants/${configEmpresa.id}`);
+      const db = getFirestore();
+      const empresaRef = doc(db, 'tenants', configEmpresa.id);
       
-      const unsubscribe = onValue(empresaRef, (snapshot) => {
-        const data = snapshot.val();
+      const unsubscribe = onSnapshot(empresaRef, (snapshot) => {
+        const data = snapshot.data();
         if (data) {
           setConfigEmpresa(prev => ({ ...prev, ...data }));
           setSpreadsheetId(data.spreadsheetId || '');
@@ -201,7 +225,7 @@ export default function Empresas() {
     setLoading(true);
     setError('');
     try {
-      const db = getDatabase();
+      const db = getFirestore();
       
       let dadosTabela = fullSheetData;
 
@@ -226,7 +250,7 @@ export default function Empresas() {
         throw new Error('Não foi possível obter os dados da planilha. Verifique se o ID está correto e se a planilha é pública (Qualquer pessoa com o link).');
       }
 
-      await update(ref(db, `tenants/${configEmpresa.id}`), {
+      await updateDoc(doc(db, 'tenants', configEmpresa.id), {
         spreadsheetId: spreadsheetId.trim(),
         tabelaGoogle: dadosTabela
       });
@@ -271,8 +295,9 @@ export default function Empresas() {
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const dadosTabela = XLSX.utils.sheet_to_json(sheet, { raw: true });
 
+      const db = getFirestore();
       // Atualiza o cache no Firebase
-      await update(ref(db, `tenants/${empresa.id}`), { tabelaGoogle: dadosTabela });
+      await updateDoc(doc(db, 'tenants', empresa.id), { tabelaGoogle: dadosTabela });
     } catch (err) {
       console.error("Erro na sincronização:", err);
       setError(`Erro na sincronização: ${err.message}`);
@@ -288,8 +313,8 @@ export default function Empresas() {
     setLoading(true);
     setError('');
     try {
-      const db = getDatabase();
-      await update(ref(db, `tenants/${configEmpresa.id}`), {
+      const db = getFirestore();
+      await updateDoc(doc(db, 'tenants', configEmpresa.id), {
         spreadsheetId: null,
         tabelaGoogle: null
       });
@@ -307,7 +332,7 @@ export default function Empresas() {
     }
   };
 
-  if (loadingPermissoes) {
+  if (loadingPermissoes || (empresaAtual && (loadingProfile || (authUser && !userProfile)))) {
     return (
       <div className="flex flex-col items-center justify-center h-96">
         <p className="text-slate-500">Carregando permissões...</p>

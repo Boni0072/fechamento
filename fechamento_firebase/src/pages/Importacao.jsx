@@ -1,14 +1,17 @@
 import { useState, useEffect } from 'react';
-import { getDatabase, ref, onValue } from 'firebase/database';
+import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { getPeriodos, importarEtapas } from '../services/database';
 import { FileSpreadsheet, AlertCircle, Check, RefreshCw, Download } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { checkPermission } from './permissionUtils';
 
 export default function Importacao() {
   const { empresaAtual } = useAuth();
-  const { loading: loadingPermissoes, autorizado } = usePermissao('importacao');
+  const { loading: loadingPermissoes, user: authUser } = usePermissao('importacao');
+  const [userProfile, setUserProfile] = useState(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
   
   const [periodos, setPeriodos] = useState([]);
   const [periodoSelecionado, setPeriodoSelecionado] = useState('');
@@ -19,13 +22,34 @@ export default function Importacao() {
   const [success, setSuccess] = useState('');
 
   useEffect(() => {
+    if (authUser?.id && empresaAtual?.id) {
+      const db = getFirestore();
+      const userRef = doc(db, 'tenants', empresaAtual.id, 'usuarios', authUser.id);
+      const unsubscribe = onSnapshot(userRef, (snapshot) => {
+        const data = snapshot.data();
+        setUserProfile(data ? { ...authUser, ...data } : authUser);
+        setLoadingProfile(false);
+      });
+      return () => unsubscribe();
+    } else {
+      setLoadingProfile(false);
+    }
+  }, [authUser, empresaAtual]);
+
+  // Restrição removida
+  const autorizado = true;
+
+  useEffect(() => {
     if (!empresaAtual) return;
     
-    // Busca dados atualizados da empresa (para garantir que temos o spreadsheetId e tabelaGoogle mais recentes)
-    const db = getDatabase();
-    const empresaRef = ref(db, `tenants/${empresaAtual.id}`);
-    const unsubEmpresa = onValue(empresaRef, (snapshot) => {
-      setEmpresaDados({ id: empresaAtual.id, ...snapshot.val() });
+    // Busca dados atualizados da empresa no Firestore
+    const db = getFirestore();
+    const empresaRef = doc(db, 'tenants', empresaAtual.id);
+    const unsubEmpresa = onSnapshot(empresaRef, (snapshot) => {
+      const data = snapshot.data();
+      if (data) {
+        setEmpresaDados({ id: empresaAtual.id, ...data });
+      }
     });
 
     const unsubscribe = getPeriodos(empresaAtual.id, (data) => {
@@ -137,9 +161,9 @@ export default function Importacao() {
     XLSX.writeFile(wb, "template_importacao_fechamento.xlsx");
   };
 
-  if (loadingPermissoes) return <div className="flex justify-center p-8 text-slate-500">Carregando permissões...</div>;
-  if (!autorizado) return <div className="flex justify-center p-8 text-slate-500">Acesso não autorizado.</div>;
+  if (loadingPermissoes || loadingProfile) return <div className="flex justify-center p-8 text-slate-500">Carregando permissões...</div>;
   if (!empresaAtual) return <div className="flex justify-center p-8 text-slate-500">Selecione uma empresa.</div>;
+  if (!autorizado) return <div className="flex justify-center p-8 text-slate-500">Acesso não autorizado.</div>;
 
   return (
     <div className="animate-fadeIn">

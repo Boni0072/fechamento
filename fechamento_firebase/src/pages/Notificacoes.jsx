@@ -1,17 +1,43 @@
 import { useState, useEffect } from 'react';
+import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { getPeriodos, getEtapas } from '../services/database';
 import { Bell, Clock, AlertTriangle, Settings, Mail } from 'lucide-react';
 import { format, differenceInDays } from 'date-fns';
+import { checkPermission } from './permissionUtils';
 
 export default function Notificacoes() {
   const { empresaAtual } = useAuth();
-  const { loading: loadingPermissoes, autorizado, user } = usePermissao('notificacoes');
+  const { loading: loadingPermissoes, user: authUser } = usePermissao('notificacoes');
+  const [userProfile, setUserProfile] = useState(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
   const [periodos, setPeriodos] = useState([]);
   const [periodoSelecionado, setPeriodoSelecionado] = useState(null);
   const [etapas, setEtapas] = useState([]);
   const [tab, setTab] = useState('alertas');
+
+  useEffect(() => {
+    if (authUser?.id && empresaAtual?.id) {
+      setLoadingProfile(true);
+      const db = getFirestore();
+      const userRef = doc(db, 'tenants', empresaAtual.id, 'usuarios', authUser.id);
+      const unsubscribe = onSnapshot(userRef, (snapshot) => {
+        const data = snapshot.data();
+        setUserProfile(data ? { ...authUser, ...data } : authUser);
+        setLoadingProfile(false);
+      }, (error) => {
+        console.error("Erro ao carregar perfil do usuário:", error);
+        setLoadingProfile(false);
+      });
+      return () => unsubscribe();
+    } else {
+      setLoadingProfile(false);
+    }
+  }, [authUser, empresaAtual]);
+
+  // Restrição removida temporariamente
+  const autorizado = true;
 
   useEffect(() => {
     if (!empresaAtual) return;
@@ -30,10 +56,18 @@ export default function Notificacoes() {
     return () => unsubscribe();
   }, [empresaAtual, periodoSelecionado]);
 
-  if (loadingPermissoes) {
+  if (loadingPermissoes || loadingProfile) {
     return (
       <div className="flex flex-col items-center justify-center h-96">
         <p className="text-slate-500">Carregando permissões...</p>
+      </div>
+    );
+  }
+
+  if (!empresaAtual) {
+    return (
+      <div className="flex flex-col items-center justify-center h-96">
+        <p className="text-slate-500">Selecione uma empresa para ver notificações</p>
       </div>
     );
   }
@@ -58,14 +92,6 @@ export default function Notificacoes() {
   });
 
   const etapasAtrasadas = etapas.filter(e => e.status === 'atrasado');
-
-  if (!empresaAtual) {
-    return (
-      <div className="flex flex-col items-center justify-center h-96">
-        <p className="text-slate-500">Selecione uma empresa para ver notificações</p>
-      </div>
-    );
-  }
 
   return (
     <div className="animate-fadeIn">

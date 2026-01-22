@@ -1,16 +1,20 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getDatabase, ref, onValue, remove, set, push } from 'firebase/database';
+import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { getPeriodos, getEtapas, getAreas, getResponsaveis, criarEtapa, atualizarEtapa, deletarEtapa, getStatusColor, getStatusLabel, importarEtapas } from '../services/database';
 import { Plus, Edit2, Trash2, X, Check, Filter, RefreshCw, Settings } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { checkPermission } from "./permissionUtils";
 
 export default function Etapas() {
   const navigate = useNavigate();
   const { empresaAtual } = useAuth();
-  const { loading: loadingPermissoes, autorizado, user } = usePermissao('etapas');
+  const { loading: loadingPermissoes, user: authUser } = usePermissao('etapas');
+  const [userProfile, setUserProfile] = useState(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
   const [periodos, setPeriodos] = useState([]);
   const [periodoSelecionado, setPeriodoSelecionado] = useState(null);
   const [etapas, setEtapas] = useState([]);
@@ -35,13 +39,34 @@ export default function Etapas() {
   });
 
   useEffect(() => {
+    if (authUser?.id && empresaAtual?.id) {
+      const db = getFirestore();
+      const userRef = doc(db, 'tenants', empresaAtual.id, 'usuarios', authUser.id);
+      const unsubscribe = onSnapshot(userRef, (snapshot) => {
+        const data = snapshot.data();
+        setUserProfile(data ? { ...authUser, ...data } : authUser);
+        setLoadingProfile(false);
+      });
+      return () => unsubscribe();
+    } else {
+      setLoadingProfile(false);
+    }
+  }, [authUser, empresaAtual]);
+
+  // Restrição removida
+  const autorizado = true;
+
+  useEffect(() => {
     if (!empresaAtual) return;
     
-    // Busca dados atualizados da empresa em tempo real (para garantir que temos o spreadsheetId mais recente)
-    const db = getDatabase();
-    const empresaRef = ref(db, `tenants/${empresaAtual.id}`);
-    const unsubEmpresa = onValue(empresaRef, (snapshot) => {
-      setEmpresaDados({ id: empresaAtual.id, ...snapshot.val() });
+    // Busca dados atualizados da empresa no Firestore (para garantir que temos o spreadsheetId mais recente)
+    const db = getFirestore();
+    const empresaRef = doc(db, 'tenants', empresaAtual.id);
+    const unsubEmpresa = onSnapshot(empresaRef, (snapshot) => {
+      const data = snapshot.data();
+      if (data) {
+        setEmpresaDados({ id: empresaAtual.id, ...data });
+      }
     });
 
     const unsubPeriodos = getPeriodos(empresaAtual.id, (data) => {
@@ -83,10 +108,18 @@ export default function Etapas() {
     return () => unsubscribe();
   }, [empresaAtual, periodoSelecionado]);
 
-  if (loadingPermissoes) {
+  if (loadingPermissoes || loadingProfile) {
     return (
       <div className="flex flex-col items-center justify-center h-96">
         <p className="text-slate-500">Carregando permissões...</p>
+      </div>
+    );
+  }
+
+  if (!empresaAtual) {
+    return (
+      <div className="flex flex-col items-center justify-center h-96">
+        <p className="text-slate-500">Selecione uma empresa para gerenciar etapas</p>
       </div>
     );
   }
@@ -108,8 +141,8 @@ export default function Etapas() {
         periodoSelecionado.id,
         etapaEditando.id,
         form,
-        user.id,
-        user.name
+        userProfile.id,
+        userProfile.nome || userProfile.name || userProfile.email
       );
     } else {
       await criarEtapa(empresaAtual.id, periodoSelecionado.id, form);
@@ -262,8 +295,8 @@ export default function Etapas() {
               updates[key] = {
                 ...dados,
                 createdAt: new Date().toISOString(),
-                createdBy: user?.id || 'importacao',
-                createdByName: user?.name || 'Importação'
+                createdBy: userProfile?.uid || userProfile?.id || 'importacao',
+                createdByName: userProfile?.nome || userProfile?.name || 'Importação'
               };
             });
             
@@ -293,14 +326,6 @@ export default function Etapas() {
     if (filtros.status && etapa.status !== filtros.status) return false;
     return true;
   });
-
-  if (!empresaAtual) {
-    return (
-      <div className="flex flex-col items-center justify-center h-96">
-        <p className="text-slate-500">Selecione uma empresa para gerenciar etapas</p>
-      </div>
-    );
-  }
 
   return (
     <div className="animate-fadeIn">

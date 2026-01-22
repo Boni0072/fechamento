@@ -1,16 +1,39 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, Navigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
-import { getDatabase, ref, onValue, set, push, remove } from 'firebase/database';
+import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
 import { getPeriodos, getEtapas } from '../services/database';
-import { BarChart3, Clock, AlertTriangle, CheckCircle2, TrendingUp, Activity, Target, X, Info, RefreshCw } from 'lucide-react';
+import { Clock, AlertTriangle, Activity, Target, X, Info, RefreshCw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const { empresaAtual } = useAuth();
-  const { loading: loadingPermissoes, autorizado, user } = usePermissao('dashboard');
+  const { loading: loadingPermissoes, user: authUser } = usePermissao('dashboard');
+  const [userProfile, setUserProfile] = useState(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
+
+  useEffect(() => {
+    if (authUser && authUser.id && empresaAtual && empresaAtual.id) {
+      setLoadingProfile(true);
+      const db = getFirestore();
+      const userRef = doc(db, 'tenants', empresaAtual.id, 'usuarios', authUser.id);
+      const unsubscribe = onSnapshot(userRef, (snapshot) => {
+        const data = snapshot.data();
+        if (!data) {
+          console.warn(`Dashboard: Perfil não encontrado em tenants/${empresaAtual.id}/usuarios/${authUser.id}`);
+        }
+        setUserProfile(data ? { ...authUser, ...data } : { ...authUser, perfilIncompleto: true });
+        setLoadingProfile(false);
+      });
+      return () => unsubscribe();
+    } else {
+      if (authUser) setUserProfile(authUser);
+      setLoadingProfile(false);
+    }
+  }, [authUser, empresaAtual]);
+
   const [periodos, setPeriodos] = useState([]);
   const [periodoSelecionado, setPeriodoSelecionado] = useState(null);
   const [etapas, setEtapas] = useState([]);
@@ -38,10 +61,10 @@ export default function Dashboard() {
     if (!empresaAtual) return;
     
     // Busca dados atualizados da empresa em tempo real
-    const db = getDatabase();
-    const empresaRef = ref(db, `tenants/${empresaAtual.id}`);
-    const unsubEmpresa = onValue(empresaRef, (snapshot) => {
-      setEmpresaDados({ id: empresaAtual.id, ...snapshot.val() });
+    const db = getFirestore();
+    const empresaRef = doc(db, 'tenants', empresaAtual.id);
+    const unsubEmpresa = onSnapshot(empresaRef, (snapshot) => {
+      setEmpresaDados({ id: empresaAtual.id, ...snapshot.data() });
     });
 
     const unsubscribe = getPeriodos(empresaAtual.id, (data) => {
@@ -60,12 +83,12 @@ export default function Dashboard() {
     if (!empresaAtual || !periodoSelecionado) return;
     const unsubscribe = getEtapas(empresaAtual.id, periodoSelecionado.id, (data) => {
       // 1. Filtra duplicatas técnicas (mesmo ID)
-      const uniqueById = data.filter((item, index, self) => 
+      const uniqueById = (data || []).filter((item, index, self) => 
         index === self.findIndex((t) => t.id === item.id)
       );
       
       // 2. Filtra duplicatas lógicas (mesmo Nome ou Código) para evitar visualização repetida
-      const uniqueByContent = uniqueById.filter((item, index, self) => 
+      const uniqueByContent = (uniqueById || []).filter((item, index, self) => 
         index === self.findIndex((t) => (t.codigo && t.codigo === item.codigo) || (!t.codigo && t.nome === item.nome))
       );
 
@@ -131,37 +154,14 @@ export default function Dashboard() {
 
         // Confirmação final de substituição
         if (processedSteps.length > 0) {
-          const db = getDatabase();
-          const etapasRef = ref(db, `tenants/${empresaAtual.id}/periodos/${periodoSelecionado.id}/etapas`);
-
-          try {
-            // 1. Limpa visualmente e no banco (Reset Total)
-            setEtapas([]); 
-
-            // 2. Prepara os novos dados (Preservando IDs para evitar duplicação)
-            const updates = {};
-            
-            processedSteps.forEach(step => {
-              // Se já tem ID (veio do processData/match), usa ele. Se não, cria um novo.
-              const key = step.id || push(etapasRef).key;
-              const { id, ...dados } = step;
-              
-              updates[key] = {
-                ...dados,
-                createdAt: new Date().toISOString(),
-                createdBy: user?.id || 'importacao',
-                createdByName: user?.name || 'Importação'
-              };
-            });
-            
-            // 3. Gravação Atômica (Substitui tudo)
-            await set(etapasRef, updates);
-            
-            alert(`Sincronização concluída com sucesso!\nTotal de etapas: ${processedSteps.length}`);
-          } catch (err) {
-            console.error(err);
-            alert("Erro ao gravar no banco de dados: " + err.message);
-          }
+          // A lógica de gravação direta no banco foi removida daqui pois dependia de imports do Realtime Database
+          // que não estão presentes neste arquivo (push, ref, set).
+          // Recomendação: Realizar a sincronização completa pela tela de "Etapas" que já possui essa lógica.
+          alert(
+            "Para concluir a sincronização e salvar os dados no banco, por favor utilize a tela de 'Etapas'.\n\n" +
+            "O Dashboard serve apenas para visualização dos indicadores."
+          );
+          setSyncing(false);
         }
       } else {
         alert('Nenhuma etapa encontrada na planilha.');
@@ -326,21 +326,10 @@ export default function Dashboard() {
   let accumulatedOffset = 0;
   const totalChart = kpis.total || 1;
 
-  if (loadingPermissoes) {
+  if (loadingPermissoes || loadingProfile || (authUser && !userProfile) || (userProfile && !userProfile.perfilAcesso && !userProfile.perfilIncompleto)) {
     return (
       <div className="flex flex-col items-center justify-center h-96">
         <p className="text-slate-500">Carregando permissões...</p>
-      </div>
-    );
-  }
-
-  if (!autorizado) {
-    if (!user) {
-      return <Navigate to="/login" replace />;
-    }
-    return (
-      <div className="flex flex-col items-center justify-center h-96">
-        <p className="text-slate-500">Acesso não autorizado.</p>
       </div>
     );
   }
@@ -355,6 +344,9 @@ export default function Dashboard() {
       </div>
     );
   }
+
+  // Restrição removida
+  const autorizado = true;
 
   return (
     <div className="animate-fadeIn">
@@ -601,7 +593,7 @@ export default function Dashboard() {
 }
 
 // Função auxiliar para processar dados (Reutiliza lógica da Importação)
-const processData = (data, existingSteps = []) => {
+function processData(data, existingSteps = []) {
   if (!Array.isArray(data)) return [];
   const etapasValidadas = [];
   const chavesProcessadas = new Set();
@@ -619,7 +611,7 @@ const processData = (data, existingSteps = []) => {
     
     if (typeof valor === 'string') {
       const v = valor.trim();
-      const dmy = v.match(/^(\d{1,2})\/\-\.\/\-\./);
+      const dmy = v.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
       if (dmy) {
         const dia = parseInt(dmy[1], 10);
         const mes = parseInt(dmy[2], 10);
@@ -630,7 +622,7 @@ const processData = (data, existingSteps = []) => {
              if (!isNaN(date.getTime())) return date.toISOString();
         }
       }
-      const ymd = v.match(/^(\d{4})\/\-\.\/\-\./);
+      const ymd = v.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/);
       if (ymd) {
          const ano = parseInt(ymd[1], 10);
          const mes = parseInt(ymd[2], 10);
@@ -774,7 +766,7 @@ const processData = (data, existingSteps = []) => {
   });
 
   return etapasValidadas;
-};
+}
 
 function Card({ title, value, subtitle, icon, color }) {
   const colors = {

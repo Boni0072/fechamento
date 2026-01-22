@@ -1,18 +1,40 @@
 import { useState, useEffect } from 'react';
+import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { getPeriodos, getEtapas, calcularIndicadores, getStatusLabel } from '../services/database';
 import { FileText, Download, BarChart3, Users, AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
+import { checkPermission } from './permissionUtils';
 
 export default function Relatorios() {
   const { empresaAtual } = useAuth();
-  const { loading: loadingPermissoes, autorizado, user } = usePermissao('relatorios');
+  const { loading: loadingPermissoes, user: authUser } = usePermissao('relatorios');
+  const [userProfile, setUserProfile] = useState(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
   const [periodos, setPeriodos] = useState([]);
   const [periodoSelecionado, setPeriodoSelecionado] = useState(null);
   const [etapas, setEtapas] = useState([]);
   const [indicadores, setIndicadores] = useState(null);
   const [tab, setTab] = useState('resumo');
+
+  useEffect(() => {
+    if (authUser?.id && empresaAtual?.id) {
+      const db = getFirestore();
+      const userRef = doc(db, 'tenants', empresaAtual.id, 'usuarios', authUser.id);
+      const unsubscribe = onSnapshot(userRef, (snapshot) => {
+        const data = snapshot.data();
+        setUserProfile(data ? { ...authUser, ...data } : authUser);
+        setLoadingProfile(false);
+      });
+      return () => unsubscribe();
+    } else {
+      setLoadingProfile(false);
+    }
+  }, [authUser, empresaAtual]);
+
+  // Restrição removida
+  const autorizado = true;
 
   useEffect(() => {
     if (!empresaAtual) return;
@@ -34,10 +56,18 @@ export default function Relatorios() {
     return () => unsubscribe();
   }, [empresaAtual, periodoSelecionado]);
 
-  if (loadingPermissoes) {
+  if (loadingPermissoes || loadingProfile) {
     return (
       <div className="flex flex-col items-center justify-center h-96">
         <p className="text-slate-500">Carregando permissões...</p>
+      </div>
+    );
+  }
+
+  if (!empresaAtual) {
+    return (
+      <div className="flex flex-col items-center justify-center h-96">
+        <p className="text-slate-500">Selecione uma empresa para ver relatórios</p>
       </div>
     );
   }
@@ -70,14 +100,6 @@ export default function Relatorios() {
     link.download = `relatorio_fechamento_${periodoSelecionado?.mes}_${periodoSelecionado?.ano}.csv`;
     link.click();
   };
-
-  if (!empresaAtual) {
-    return (
-      <div className="flex flex-col items-center justify-center h-96">
-        <p className="text-slate-500">Selecione uma empresa para ver relatórios</p>
-      </div>
-    );
-  }
 
   const etapasAtrasadas = etapas.filter(e => e.status === 'atrasado' || e.status === 'concluido_atraso');
   const etapasPorArea = etapas.reduce((acc, e) => {
