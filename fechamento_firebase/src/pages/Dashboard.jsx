@@ -1017,9 +1017,21 @@ function StatusDetailsModal({ statusType, etapas, onClose }) {
     }
   };
 
+  const calcularAtrasoHoras = (prevista, real) => {
+    if (!prevista || !real) return '-';
+
+    const diff = new Date(real) - new Date(prevista);
+    if (diff <= 0) return '-';
+
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+    return `${hours}h ${minutes}m`;
+  };
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-fadeIn">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl relative max-h-[90vh] flex flex-col">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[90vw] relative max-h-[90vh] flex flex-col">
         <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50 rounded-t-2xl">
           <div>
             <h3 className="text-lg font-bold text-slate-800">{getTitle()}</h3>
@@ -1030,17 +1042,20 @@ function StatusDetailsModal({ statusType, etapas, onClose }) {
           </button>
         </div>
         
-        <div className="overflow-y-auto custom-scrollbar p-0 flex-1">
+        <div className="overflow-auto custom-scrollbar p-0 flex-1">
           {filtered.length === 0 ? (
             <div className="p-8 text-center text-slate-500">Nenhuma etapa encontrada com este status.</div>
           ) : (
             <table className="w-full text-sm text-left">
-              <thead className="bg-slate-50 text-slate-600 font-medium sticky top-0 shadow-sm">
+              <thead className="bg-slate-50 text-slate-600 font-medium sticky top-0 shadow-sm z-10">
                 <tr>
-                  <th className="p-3 border-b">Código</th>
-                  <th className="p-3 border-b">Etapa</th>
-                  <th className="p-3 border-b">Responsável</th>
-                  <th className="p-3 border-b">Prevista</th>
+                  <th className="p-3 border-b whitespace-nowrap">Código</th>
+                  <th className="p-3 border-b min-w-[200px]">Etapa</th>
+                  <th className="p-3 border-b whitespace-nowrap">Responsável</th>
+                  <th className="p-3 border-b whitespace-nowrap">Prevista</th>
+                  <th className="p-3 border-b whitespace-nowrap">Realizado</th>
+                  <th className="p-3 border-b whitespace-nowrap text-center">Atraso (h)</th>
+                  <th className="p-3 border-b min-w-[250px]">Observação</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -1051,6 +1066,15 @@ function StatusDetailsModal({ statusType, etapas, onClose }) {
                     <td className="p-3 text-slate-600 whitespace-nowrap">{item.responsavel || 'Não atribuído'}</td>
                     <td className="p-3 text-slate-600 whitespace-nowrap">
                       {item.dataPrevista ? new Date(item.dataPrevista).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+                    </td>
+                    <td className="p-3 text-slate-600 whitespace-nowrap">
+                      {item.dataReal ? new Date(item.dataReal).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+                    </td>
+                    <td className="p-3 text-slate-600 whitespace-nowrap text-center">
+                      {calcularAtrasoHoras(item.dataPrevista, item.dataReal)}
+                    </td>
+                    <td className="p-3 text-slate-600 whitespace-pre-wrap">
+                      {item.observacoes || '-'}
                     </td>
                   </tr>
                 ))}
