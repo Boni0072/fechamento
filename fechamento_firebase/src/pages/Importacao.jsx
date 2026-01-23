@@ -484,7 +484,7 @@ const processData = (data) => {
       dataReal: dataReal,
       ordem: ordem,
       codigo: (codigo !== undefined && codigo !== null) ? codigo : '',
-      observacoes: getVal(['Observações', 'observacoes']) || '',
+      observacoes: getVal(['Observações', 'observacoes', 'Observação', 'observação', 'Observacao', 'observacao', 'Obs', 'obs', 'Comentários', 'comentarios']) || '',
       status: status,
       concluidoEm: concluidoEm,
       quemConcluiu: quemConcluiu

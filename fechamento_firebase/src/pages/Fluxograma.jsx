@@ -217,8 +217,8 @@ export default function Fluxograma() {
               updates[key] = {
                 ...dados,
                 createdAt: new Date().toISOString(),
-                createdBy: user?.id || 'importacao',
-                createdByName: user?.name || 'Importação'
+                createdBy: userProfile?.id || 'importacao',
+                createdByName: userProfile?.nome || userProfile?.name || 'Importação'
               };
             });
             
@@ -256,6 +256,9 @@ export default function Fluxograma() {
 
     // Verifica variações de 'concluido' (ex: 'Concluído', 'Concluído c/ Atraso')
     if (status === 'concluido' || status === 'concluído' || status.includes('concluido') || status.includes('concluído')) {
+      // Se o status explícito já indica atraso, retorna laranja
+      if (status.includes('atraso')) return 'bg-orange-500';
+
       if (etapa.dataReal && etapa.dataPrevista) {
         try {
           const real = format(new Date(etapa.dataReal), 'yyyy-MM-dd');
@@ -281,6 +284,26 @@ export default function Fluxograma() {
     }
   };
 
+  const getDynamicStatusLabel = (etapa) => {
+    const status = etapa.status ? etapa.status.toLowerCase() : '';
+    const now = new Date();
+
+    if (status === 'concluido' || status === 'concluído' || status.includes('concluido')) {
+      if (status.includes('atraso')) return 'Concluído c/ Atraso';
+      if (etapa.dataReal && etapa.dataPrevista) {
+        try {
+          const real = format(new Date(etapa.dataReal), 'yyyy-MM-dd');
+          const prev = format(new Date(etapa.dataPrevista), 'yyyy-MM-dd');
+          if (real > prev) return 'Concluído c/ Atraso';
+        } catch (e) {}
+      }
+      return 'Concluído';
+    }
+
+    if (etapa.dataPrevista && new Date(etapa.dataPrevista) < now) return 'Atrasado';
+    return getStatusLabel(etapa.status);
+  };
+
   // Identifica tarefas que não aparecerão na timeline
   const tarefasSemData = etapas.filter(e => !e.dataPrevista);
   const dataFimTimeline = addDays(dataInicio, diasNoMes);
@@ -292,6 +315,37 @@ export default function Fluxograma() {
   });
 
   const totalOcultas = tarefasSemData.length + tarefasForaDoPeriodo.length;
+
+  // Cálculos para os cards de resumo
+  const totalTarefas = etapas.length;
+  const tarefasAtrasadasCount = etapas.filter(e => {
+    const isLate = e.dataPrevista && new Date(e.dataPrevista) < new Date() && 
+                   e.status !== 'concluido' && 
+                   e.status !== 'concluido_atraso';
+    return e.status === 'atrasado' || isLate;
+  }).length;
+  const percentualAtraso = totalTarefas > 0 ? Math.round((tarefasAtrasadasCount / totalTarefas) * 100) : 0;
+
+  const tarefasConcluidasCount = etapas.filter(e => {
+    const s = e.status ? String(e.status).toLowerCase() : '';
+    return s.includes('concluido') || s.includes('concluído');
+  }).length;
+  const percentualConcluido = totalTarefas > 0 ? Math.round((tarefasConcluidasCount / totalTarefas) * 100) : 0;
+
+  const legendCounts = {
+    'bg-green-500': 0,
+    'bg-blue-500': 0,
+    'bg-yellow-500': 0,
+    'bg-orange-500': 0,
+    'bg-red-500': 0
+  };
+
+  etapas.forEach(etapa => {
+    const color = getStatusBorderColor(etapa);
+    if (legendCounts[color] !== undefined) {
+      legendCounts[color]++;
+    }
+  });
 
   const renderSlot = ({ date, hour }) => {
     const dateStr = format(date, 'yyyy-MM-dd');
@@ -538,25 +592,39 @@ export default function Fluxograma() {
 
       {/* Cards de Resumo */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-        <div className="bg-white p-4 rounded-xl shadow-sm flex items-center justify-between border border-slate-100">
+        <div className="bg-white p-4 rounded-xl shadow-sm flex items-center gap-4 border border-slate-100">
+          <div className="relative w-16 h-16 shrink-0">
+            <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
+              <path
+                className="text-slate-100"
+                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3"
+              />
+              <path
+                className="text-green-500 transition-all duration-1000 ease-out"
+                strokeDasharray={`${percentualConcluido}, 100`}
+                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3"
+              />
+            </svg>
+            <div className="absolute inset-0 flex items-center justify-center text-xs font-bold text-slate-700">
+              {percentualConcluido}%
+            </div>
+          </div>
           <div>
             <p className="text-sm font-medium text-slate-500">Total de Tarefas</p>
-            <p className="text-2xl font-bold text-slate-800">{etapas.length}</p>
-          </div>
-          <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center">
-            <Clock className="w-5 h-5 text-blue-600" />
+            <p className="text-2xl font-bold text-slate-800">{totalTarefas}</p>
           </div>
         </div>
 
         <div className="bg-white p-4 rounded-xl shadow-sm flex items-center justify-between border border-slate-100">
           <div>
             <p className="text-sm font-medium text-slate-500">Tarefas Atrasadas</p>
-            <p className="text-2xl font-bold text-red-600">{etapas.filter(e => {
-              const isLate = e.dataPrevista && new Date(e.dataPrevista) < new Date() && 
-                             e.status !== 'concluido' && 
-                             e.status !== 'concluido_atraso';
-              return e.status === 'atrasado' || isLate;
-            }).length}</p>
+            <p className="text-2xl font-bold text-red-600">{tarefasAtrasadasCount}</p>
           </div>
           <div className="w-10 h-10 bg-red-50 rounded-lg flex items-center justify-center">
             <AlertTriangle className="w-5 h-5 text-red-600" />
@@ -566,11 +634,11 @@ export default function Fluxograma() {
 
       {/* Legenda */}
       <div className="bg-white rounded-xl shadow-sm p-4 mb-6 flex flex-wrap gap-4">
-        <LegendItem color="bg-green-500" label="Concluído" onClick={() => setFiltroLegenda({ color: 'bg-green-500', label: 'Concluído' })} />
-        <LegendItem color="bg-blue-500" label="Em Andamento" onClick={() => setFiltroLegenda({ color: 'bg-blue-500', label: 'Em Andamento' })} />
-        <LegendItem color="bg-yellow-500" label="Pendente" onClick={() => setFiltroLegenda({ color: 'bg-yellow-500', label: 'Pendente' })} />
-        <LegendItem color="bg-orange-500" label="Concluído c/ Atraso" onClick={() => setFiltroLegenda({ color: 'bg-orange-500', label: 'Concluído c/ Atraso' })} />
-        <LegendItem color="bg-red-500" label="Atrasado" onClick={() => setFiltroLegenda({ color: 'bg-red-500', label: 'Atrasado' })} />
+        <LegendItem color="bg-green-500" label="Concluído" count={legendCounts['bg-green-500']} onClick={() => setFiltroLegenda({ color: 'bg-green-500', label: 'Concluído' })} />
+        <LegendItem color="bg-blue-500" label="Em Andamento" count={legendCounts['bg-blue-500']} onClick={() => setFiltroLegenda({ color: 'bg-blue-500', label: 'Em Andamento' })} />
+        <LegendItem color="bg-yellow-500" label="Pendente" count={legendCounts['bg-yellow-500']} onClick={() => setFiltroLegenda({ color: 'bg-yellow-500', label: 'Pendente' })} />
+        <LegendItem color="bg-orange-500" label="Concluído c/ Atraso" count={legendCounts['bg-orange-500']} onClick={() => setFiltroLegenda({ color: 'bg-orange-500', label: 'Concluído c/ Atraso' })} />
+        <LegendItem color="bg-red-500" label="Atrasado" count={legendCounts['bg-red-500']} onClick={() => setFiltroLegenda({ color: 'bg-red-500', label: 'Atrasado' })} />
       </div>
 
       {/* Fluxograma Kanban */}
@@ -666,7 +734,7 @@ export default function Fluxograma() {
       {/* Modal de Legenda (Lista de Atividades) */}
       {filtroLegenda && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[80vh] flex flex-col animate-slideIn">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[80vh] flex flex-col animate-slideIn">
             <div className="p-4 border-b border-slate-100 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className={`w-4 h-4 rounded ${filtroLegenda.color}`}></div>
@@ -680,11 +748,11 @@ export default function Fluxograma() {
             </div>
             
             <div className="px-3 py-2 bg-slate-50 border-b border-slate-100 grid grid-cols-12 gap-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-              <div className="col-span-4 pl-5">Atividade</div>
+              <div className="col-span-5 pl-5">Atividade</div>
               <div className="col-span-2">Responsável</div>
-              <div className="col-span-2 text-center">Início</div>
-              <div className="col-span-2 text-center">Término</div>
-              <div className="col-span-2">Observação</div>
+              <div className="col-span-1 text-center">Início</div>
+              <div className="col-span-1 text-center">Término</div>
+              <div className="col-span-3 text-left pl-2">Observação</div>
             </div>
             
             <div className="p-4 overflow-y-auto custom-scrollbar">
@@ -703,35 +771,38 @@ export default function Fluxograma() {
                       }}
                       className="w-full p-3 rounded-lg bg-white border border-slate-200 shadow-sm text-left hover:shadow-md transition-all grid grid-cols-12 gap-2 group"
                     >
-                      {/* Coluna 1: Atividade (4 cols) */}
-                      <div className="col-span-4 flex gap-3 min-w-0">
+                      {/* Coluna 1: Atividade (5 cols) */}
+                      <div className="col-span-5 flex gap-3 min-w-0">
                         <div className={`w-1.5 rounded-full shrink-0 ${getStatusBorderColor(etapa)}`}></div>
                         <div className="min-w-0 flex flex-col justify-center">
                           <div className="flex items-center gap-2">
                              <div className="font-medium text-sm text-slate-800 truncate" title={etapa.nome}>{etapa.nome}</div>
                              <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100 shrink-0">D+{etapa.ordem}</span>
                           </div>
+                          <div className={`text-[10px] font-medium ${getStatusBorderColor(etapa).replace('bg-', 'text-')}`}>
+                            {getDynamicStatusLabel(etapa)}
+                          </div>
                         </div>
                       </div>
 
                       {/* Coluna 2: Responsável (2 cols) */}
-                      <div className="col-span-2 flex items-center text-xs text-slate-500 truncate" title={etapa.responsavel}>
+                      <div className="col-span-2 flex items-center text-xs text-slate-500 min-w-0" title={etapa.responsavel}>
                         <span className="truncate w-full">{etapa.responsavel || '-'}</span>
                       </div>
 
-                      {/* Coluna 3: Início (2 cols) */}
-                      <div className="col-span-2 flex items-center justify-center text-xs text-slate-500">
+                      {/* Coluna 3: Início (1 col) */}
+                      <div className="col-span-1 flex items-center justify-center text-xs text-slate-500">
                         {etapa.dataPrevista ? format(new Date(etapa.dataPrevista), 'dd/MM HH:mm') : '-'}
                       </div>
 
-                      {/* Coluna 4: Término (2 cols) */}
-                      <div className="col-span-2 flex items-center justify-center text-xs text-slate-500">
+                      {/* Coluna 4: Término (1 col) */}
+                      <div className="col-span-1 flex items-center justify-center text-xs text-slate-500">
                         {etapa.dataReal ? format(new Date(etapa.dataReal), 'dd/MM HH:mm') : '-'}
                       </div>
 
-                      {/* Coluna 5: Observação (2 cols) */}
-                      <div className="col-span-2 flex items-center text-xs text-slate-400 italic truncate" title={etapa.observacoes}>
-                        <span className="truncate w-full">{etapa.observacoes || '-'}</span>
+                      {/* Coluna 6: Observação (3 cols) */}
+                      <div className="col-span-3 text-xs text-slate-600 pl-2 break-words whitespace-pre-wrap" title={etapa.observacoes}>
+                        {etapa.observacoes || '-'}
                       </div>
                     </button>
                   ))}
@@ -937,7 +1008,7 @@ const processData = (data, existingSteps = []) => {
   return etapasValidadas;
 };
 
-function LegendItem({ color, label, onClick }) {
+function LegendItem({ color, label, count, onClick }) {
   return (
     <button 
       onClick={onClick}
@@ -945,6 +1016,11 @@ function LegendItem({ color, label, onClick }) {
     >
       <div className={`w-4 h-4 rounded ${color}`} />
       <span className="text-sm text-slate-600">{label}</span>
+      {count !== undefined && (
+        <span className="text-xs font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md ml-1">
+          {count}
+        </span>
+      )}
     </button>
   );
 }
