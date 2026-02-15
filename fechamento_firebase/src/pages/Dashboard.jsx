@@ -45,6 +45,7 @@ export default function Dashboard() {
   const [empresaDados, setEmpresaDados] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [showResponsavel, setShowResponsavel] = useState(false);
+  const [showApoio, setShowApoio] = useState(false); 
   const [kpis, setKpis] = useState({
     total: 0,
     concluidas: 0,
@@ -65,23 +66,18 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!empresaAtual && (!empresas || empresas.length === 0)) return;
-    
     const db = getFirestore();
     let unsubEmpresa = () => {};
-
     if (empresaAtual) {
       const empresaRef = doc(db, 'tenants', empresaAtual.id);
       unsubEmpresa = onSnapshot(empresaRef, (snapshot) => {
         setEmpresaDados({ id: empresaAtual.id, ...snapshot.data() });
       });
     }
-
     let unsubscribe;
-
     if (viewAllCompanies) {
       const unsubscribes = [];
       const allPeriodsMap = new Map();
-
       empresas.forEach(emp => {
         const unsub = getPeriodos(emp.id, (data) => {
           data.forEach(p => {
@@ -90,13 +86,11 @@ export default function Dashboard() {
               allPeriodsMap.set(key, { mes: p.mes, ano: p.ano, id: key });
             }
           });
-          
           const sortedData = Array.from(allPeriodsMap.values()).sort((a, b) => {
             if (b.ano !== a.ano) return b.ano - a.ano;
             if (b.mes !== a.mes) return b.mes - a.mes;
             return 0;
           });
-          
           setPeriodos(sortedData);
           setPeriodoSelecionado(prev => {
             if (!prev && sortedData.length > 0) return sortedData[0];
@@ -117,18 +111,15 @@ export default function Dashboard() {
           if (b.mes !== a.mes) return b.mes - a.mes;
           return a.id.localeCompare(b.id);
         });
-
         const periodosUnicos = sortedData.filter((item, index, self) =>
           index === self.findIndex(p => p.mes === item.mes && p.ano === item.ano)
         );
-
         setPeriodos(periodosUnicos);
         if (periodosUnicos.length > 0 && !periodoSelecionado) {
           setPeriodoSelecionado(periodosUnicos[0]);
         }
       });
     }
-
     return () => {
       unsubscribe();
       unsubEmpresa();
@@ -137,13 +128,10 @@ export default function Dashboard() {
 
   useEffect(() => {
     if ((!empresaAtual && !viewAllCompanies) || !periodoSelecionado) return;
-
     let unsubscribe;
-
     if (viewAllCompanies) {
       const unsubscribes = [];
       const etapasMap = new Map();
-
       empresas.forEach(emp => {
         const unsubPeriodos = getPeriodos(emp.id, (periodsData) => {
           const match = periodsData.find(p => p.mes === periodoSelecionado.mes && p.ano === periodoSelecionado.ano);
@@ -167,7 +155,7 @@ export default function Dashboard() {
       unsubscribe = getEtapas(empresaAtual.id, periodoSelecionado.id, (data) => {
         const uniqueById = (data || []).filter((item, index, self) => index === self.findIndex((t) => t.id === item.id));
         const uniqueByContent = (uniqueById || []).filter((item, index, self) => index === self.findIndex((t) => (t.codigo && t.codigo === item.codigo) || (!t.codigo && t.nome === item.nome)));
-          setEtapas(uniqueByContent);
+        setEtapas(uniqueByContent);
         calcularKpis(uniqueByContent);
       });
     }
@@ -493,9 +481,9 @@ export default function Dashboard() {
     <div className="animate-fadeIn">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4">
-          <img src="/contabil.png" alt="Logo Contábil" className="w-36 h-36 object-contain" />
+          
           <div>
-            <h1 className="text-2xl font-bold text-slate-800">Dashboard do Fechamento</h1>
+            <h1 className="text-3xl font-bold text-slate-800">Dashboard do Fechamento</h1>
             <p className="text-slate-500">Acompanhe o progresso do fechamento contábil</p>
           </div>
         </div>
@@ -536,7 +524,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 mb-6">
         {/* Progresso do Fechamento */}
         <div className="lg:col-span-2 bg-white rounded-xl shadow-sm p-4 h-full">
-          <h2 className="text-lg font-semibold text-slate-800 mb-4">Progresso do Fechamento</h2>
+          <h2 className="text-xl font-semibold text-slate-800 mb-4">Progresso do Fechamento</h2>
           
           <div className="flex flex-wrap xl:flex-nowrap items-center gap-6 justify-center">
             {/* Gráfico de Rosca */}
@@ -567,7 +555,7 @@ export default function Dashboard() {
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
                 <span className="text-5xl font-bold text-slate-800">{kpis.percentualConcluido}%</span>
-                <span className="text-lg text-slate-500 font-medium uppercase">Concluído</span>
+                <span className="text-xl text-slate-500 font-medium uppercase">Concluído</span>
               </div>
             </div>
 
@@ -623,16 +611,16 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
             {/* Desempenho por Área */}
             <div className="bg-white rounded-xl shadow-sm p-4">
-              <h2 className="text-lg font-semibold text-slate-800 mb-4">Desempenho por Área</h2>
+              <h2 className="text-xl font-semibold text-slate-800 mb-4">Desempenho por Área</h2>
               <div className="h-[200px] flex items-end gap-2 overflow-x-auto custom-scrollbar pb-2">
                 {kpis.desempenhoPorArea.length === 0 ? (
-                  <div className="w-full h-full flex items-center justify-center text-sm text-slate-400">
+                  <div className="w-full h-full flex items-center justify-center text-base text-slate-400">
                     Nenhum dado disponível
                   </div>
                 ) : (
                   kpis.desempenhoPorArea.map((item, idx) => (
                     <div key={idx} className="flex flex-col items-center gap-2 min-w-[50px] flex-1 h-full justify-end group">
-                      <span className="text-xs font-bold text-slate-700">{item.percentual}%</span>
+                      <span className="text-sm font-bold text-slate-700">{item.percentual}%</span>
                       <div className="w-full max-w-[40px] flex-1 bg-slate-100 rounded-t-lg relative overflow-hidden">
                         <div 
                           className="absolute bottom-0 left-0 right-0 bg-blue-500 hover:bg-blue-600 transition-all duration-500 rounded-t-lg"
@@ -650,17 +638,17 @@ export default function Dashboard() {
 
             {/* Gargalos */}
             <div className="bg-white rounded-xl shadow-sm p-4">
-              <h2 className="text-lg font-semibold text-slate-800 mb-4">Principais Gargalos</h2>
-              <p className="text-sm text-slate-500 mb-4">Áreas com mais atrasos</p>
+              <h2 className="text-xl font-semibold text-slate-800 mb-4">Principais Gargalos</h2>
+              <p className="text-base text-slate-500 mb-4">Áreas com mais atrasos</p>
               
               <div className="space-y-4">
                 {kpis.topGargalos.length === 0 ? (
-                  <p className="text-sm text-slate-400 text-center py-4">Nenhum gargalo identificado</p>
+                  <p className="text-base text-slate-400 text-center py-4">Nenhum gargalo identificado</p>
                 ) : (
                   kpis.topGargalos.map((item, idx) => (
                     <div key={idx} className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-slate-700">{item.area}</span>
-                      <span className="text-xs font-bold bg-red-100 text-red-700 px-2 py-1 rounded-full">
+                      <span className="text-base font-medium text-slate-700">{item.area}</span>
+                      <span className="text-sm font-bold bg-red-100 text-red-700 px-2 py-1 rounded-full">
                         {item.count} atrasadas
                       </span>
                     </div>
@@ -677,14 +665,14 @@ export default function Dashboard() {
 
         {/* Evolução por Empresas */}
         <div className="bg-white rounded-xl shadow-sm p-6">
-          <h2 className="text-lg font-semibold text-slate-800 mb-4">Evolução por Empresas</h2>
+          <h2 className="text-xl font-semibold text-slate-800 mb-4">Evolução por Empresas</h2>
           <div className="space-y-5">
             {kpis.desempenhoPorEmpresa.length === 0 ? (
-               <p className="text-sm text-slate-400 text-center py-4">Nenhum dado disponível</p>
+               <p className="text-base text-slate-400 text-center py-4">Nenhum dado disponível</p>
             ) : (
               kpis.desempenhoPorEmpresa.map((item, idx) => (
                 <div key={idx} className="space-y-1">
-                  <div className="flex justify-between text-sm font-medium text-slate-700">
+                  <div className="flex justify-between text-base font-medium text-slate-700">
                     <span>{item.nome}</span>
                     <span className="font-bold text-green-600">{item.percentual}%</span>
                   </div>
@@ -694,7 +682,7 @@ export default function Dashboard() {
                       style={{ width: `${item.percentual}%` }}
                     />
                   </div>
-                  <div className="text-xs text-slate-400 text-right">
+                  <div className="text-sm text-slate-400 text-right">
                     {item.concluidas}/{item.total} etapas concluídas
                   </div>
                 </div>
@@ -710,10 +698,10 @@ export default function Dashboard() {
             onClick={() => setShowResponsavel(!showResponsavel)}
           >
             <div className="flex items-center gap-2">
-              <h2 className="text-lg font-semibold text-slate-800">Desempenho por Responsável</h2>
+              <h2 className="text-xl font-semibold text-slate-800">Desempenho por Responsável</h2>
               <div className="group relative" onClick={(e) => e.stopPropagation()}>
                 <Info className="w-4 h-4 text-slate-400 cursor-help" />
-                <div className="absolute right-0 bottom-full mb-2 w-64 p-2 bg-slate-800 text-white text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none font-normal">
+                <div className="absolute right-0 bottom-full mb-2 w-64 p-2 bg-slate-800 text-white text-sm rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none font-normal">
                   O percentual indica a taxa de conclusão (Concluídas/Total). Clique em um usuário para ver o Radar de Performance detalhado.
                   <div className="absolute top-full right-1 border-4 border-transparent border-t-slate-800"></div>
                 </div>
@@ -724,7 +712,7 @@ export default function Dashboard() {
           {showResponsavel && (
           <div className="space-y-4 max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
             {kpis.desempenhoPorResponsavel.length === 0 ? (
-              <p className="text-sm text-slate-400 text-center py-4">Nenhum dado disponível</p>
+              <p className="text-base text-slate-400 text-center py-4">Nenhum dado disponível</p>
             ) : (
               kpis.desempenhoPorResponsavel.map((item, idx) => (
                 <div 
@@ -732,7 +720,7 @@ export default function Dashboard() {
                   onClick={() => setSelectedUser(item.nome)}
                   className="cursor-pointer hover:bg-slate-50 p-2 rounded-lg transition-colors group"
                 >
-                  <div className="flex justify-between text-sm mb-1">
+                  <div className="flex justify-between text-base mb-1">
                     <span className="font-medium text-slate-700">{item.nome}</span>
                     <span className="text-slate-500">{item.concluidas}/{item.total} ({item.percentual}%)</span>
                   </div>
@@ -754,13 +742,13 @@ export default function Dashboard() {
           <div className="flex items-center gap-2 mb-6">
             <Trophy className="w-5 h-5 text-yellow-500" />
             <div>
-              <h2 className="text-lg font-semibold text-slate-800">Campeões de Apoio</h2>
-              <p className="text-xs text-slate-500">Quem mais executou atividades de outros</p>
+              <h2 className="text-xl font-semibold text-slate-800">Campeões de Apoio</h2>
+              <p className="text-sm text-slate-500">Quem mais executou atividades de outros</p>
             </div>
           </div>
           
           {kpis.rankingApoio.length === 0 ? (
-             <p className="text-sm text-slate-400 text-center py-4">Nenhum dado disponível</p>
+             <p className="text-base text-slate-400 text-center py-4">Nenhum dado disponível</p>
           ) : (
             <div className="flex items-end justify-center gap-2 sm:gap-4 h-48 pt-4">  
               {/* 2nd Place */}
@@ -768,11 +756,11 @@ export default function Dashboard() {
                 {kpis.rankingApoio[1] ? (
                   <>
                     <div className="mb-2 text-center transition-transform group-hover:-translate-y-1">
-                      <span className="block text-xs font-bold text-slate-600 truncate max-w-[80px] sm:max-w-[120px]">{kpis.rankingApoio[1].nome}</span>
+                      <span className="block text-sm font-bold text-slate-600 truncate max-w-[80px] sm:max-w-[120px]">{kpis.rankingApoio[1].nome}</span>
                       <span className="text-[10px] text-slate-400 font-medium">{kpis.rankingApoio[1].count} tarefas</span>
                     </div>
                     <div className="w-full bg-slate-200 rounded-t-lg h-24 flex items-end justify-center pb-2 relative border-t-4 border-slate-300">
-                       <div className="text-2xl font-bold text-slate-400">2</div>
+                       <div className="text-3xl font-bold text-slate-400">2</div>
                     </div>
                   </>
                 ) : <div className="w-full h-24" />}
@@ -784,11 +772,11 @@ export default function Dashboard() {
                   <>
                     <div className="mb-2 text-center transition-transform group-hover:-translate-y-1">
                       <div className="text-yellow-500 mb-1 animate-bounce">👑</div>
-                      <span className="block text-sm font-bold text-slate-800 truncate max-w-[90px] sm:max-w-[140px]">{kpis.rankingApoio[0].nome}</span>
-                      <span className="text-xs text-slate-500 font-medium">{kpis.rankingApoio[0].count} tarefas</span>
+                      <span className="block text-base font-bold text-slate-800 truncate max-w-[90px] sm:max-w-[140px]">{kpis.rankingApoio[0].nome}</span>
+                      <span className="text-sm text-slate-500 font-medium">{kpis.rankingApoio[0].count} tarefas</span>
                     </div>
                     <div className="w-full bg-yellow-100 border-t-4 border-yellow-400 rounded-t-lg h-32 flex items-end justify-center pb-2 shadow-sm relative">
-                       <div className="text-3xl font-bold text-yellow-600">1</div>
+                       <div className="text-4xl font-bold text-yellow-600">1</div>
                     </div>
                   </>
                 ) : <div className="w-full h-32" />}
@@ -799,17 +787,57 @@ export default function Dashboard() {
                 {kpis.rankingApoio[2] ? (
                   <>
                     <div className="mb-2 text-center transition-transform group-hover:-translate-y-1">
-                      <span className="block text-xs font-bold text-slate-600 truncate max-w-[80px] sm:max-w-[120px]">{kpis.rankingApoio[2].nome}</span>
+                      <span className="block text-sm font-bold text-slate-600 truncate max-w-[80px] sm:max-w-[120px]">{kpis.rankingApoio[2].nome}</span>
                       <span className="text-[10px] text-slate-400 font-medium">{kpis.rankingApoio[2].count} tarefas</span>
                     </div>
                     <div className="w-full bg-orange-100 rounded-t-lg h-16 flex items-end justify-center pb-2 relative border-t-4 border-orange-200">
-                       <div className="text-xl font-bold text-orange-400">3</div>
+                       <div className="text-2xl font-bold text-orange-400">3</div>
                     </div>
                   </>
                 ) : <div className="w-full h-16" />}
               </div>
             </div>
           )}
+          {kpis.rankingApoio.length > 0 && (
+            <div className="mt-4 border-t border-slate-100 pt-4">
+              <button 
+                onClick={() => setShowApoio(!showApoio)}
+                className="w-full flex items-center justify-between text-base font-semibold text-slate-700 hover:text-slate-900 transition-colors mb-2"
+              >
+                <div className="flex items-center gap-2">
+                  <Trophy className="w-5 h-5 text-orange-500" />
+                  <span>Lista de Apoio</span>
+                </div>
+                {showApoio ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+              </button>
+              
+              {showApoio && (
+                <div className="space-y-3 animate-fadeIn">
+                  {kpis.rankingApoio.map((item, index) => {
+                    const percentual = Math.round((item.count / kpis.total) * 100) || 0;
+                    return (
+                      <div key={index} className="group">
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="text-base font-medium text-slate-600">{item.nome}</span>
+                          <span className="text-sm font-bold text-slate-400 group-hover:text-slate-600 transition-colors">
+                            {item.count} tarefas ({percentual}%)
+                          </span>
+                        </div>
+                        <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-orange-500 rounded-full transition-all duration-1000 ease-out"
+                            style={{ width: `${percentual}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+
         </div>
       </div>
 
@@ -1024,9 +1052,9 @@ function Card({ title, value, subtitle, icon, color }) {
     <div className="bg-white rounded-xl shadow-sm p-4">
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-sm text-slate-500">{title}</p>
-          <p className="text-3xl font-bold text-slate-800 mt-1">{value}</p>
-          <p className="text-sm text-slate-400 mt-1">{subtitle}</p>
+          <p className="text-base text-slate-500">{title}</p>
+          <p className="text-4xl font-bold text-slate-800 mt-1">{value}</p>
+          <p className="text-base text-slate-400 mt-1">{subtitle}</p>
         </div>
         <div className={`p-3 rounded-xl ${colors[color]}`}>
           {icon}
@@ -1161,8 +1189,8 @@ function RadarModal({ userName, allEtapas, onClose }) {
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg relative max-h-[90vh] overflow-y-auto custom-scrollbar">
         <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50 sticky top-0 z-10">
           <div>
-            <h3 className="text-lg font-bold text-slate-800">Radar de Performance</h3>
-            <p className="text-sm text-slate-500">{userName}</p>
+            <h3 className="text-xl font-bold text-slate-800">Radar de Performance</h3>
+            <p className="text-base text-slate-500">{userName}</p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
             <X className="w-5 h-5 text-slate-500" />
@@ -1206,18 +1234,18 @@ function RadarModal({ userName, allEtapas, onClose }) {
           </div>
           
           <div className="w-full mt-6 bg-blue-50 p-4 rounded-lg border border-blue-100 mb-4">
-            <h4 className="text-sm font-bold text-blue-800 mb-1">Resumo do Perfil</h4>
-            <p className="text-sm text-blue-700 leading-relaxed">{resumoPerfil}</p>
+            <h4 className="text-base font-bold text-blue-800 mb-1">Resumo do Perfil</h4>
+            <p className="text-base text-blue-700 leading-relaxed">{resumoPerfil}</p>
           </div>
 
           <div className="flex flex-col gap-3 w-full">
             {metrics.map((m, i) => (
               <div key={i} className="bg-slate-50 p-3 rounded-lg flex justify-between items-center">
                 <div className="pr-4">
-                  <div className="text-sm font-semibold text-slate-700">{m.label}</div>
-                  <div className="text-xs text-slate-500 mt-0.5 leading-relaxed">{m.desc}</div>
+                  <div className="text-base font-semibold text-slate-700">{m.label}</div>
+                  <div className="text-sm text-slate-500 mt-0.5 leading-relaxed">{m.desc}</div>
                 </div>
-                <div className="text-lg font-bold text-slate-800 whitespace-nowrap">{m.value}%</div>
+                <div className="text-xl font-bold text-slate-800 whitespace-nowrap">{m.value}%</div>
               </div>
             ))}
           </div>
@@ -1289,8 +1317,8 @@ function StatusDetailsModal({ statusType, etapas, onClose }) {
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[90vw] relative max-h-[90vh] flex flex-col">
         <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50 rounded-t-2xl">
           <div>
-            <h3 className="text-lg font-bold text-slate-800">{getTitle()}</h3>
-            <p className="text-sm text-slate-500">{filtered.length} itens encontrados</p>
+            <h3 className="text-xl font-bold text-slate-800">{getTitle()}</h3>
+            <p className="text-base text-slate-500">{filtered.length} itens encontrados</p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
             <X className="w-5 h-5 text-slate-500" />
@@ -1301,7 +1329,7 @@ function StatusDetailsModal({ statusType, etapas, onClose }) {
           {filtered.length === 0 ? (
             <div className="p-8 text-center text-slate-500">Nenhuma etapa encontrada com este status.</div>
           ) : (
-            <table className="w-full text-sm text-left">
+            <table className="w-full text-base text-left">
               <thead className="bg-slate-50 text-slate-600 font-medium sticky top-0 shadow-sm z-10">
                 <tr>
                   <th className="p-3 border-b whitespace-nowrap">Código</th>
@@ -1360,10 +1388,10 @@ function StatusBadge({ color, label, count, onClick, className = '' }) {
     >
       <div className="flex items-center gap-2">
         <div className={`w-2.5 h-2.5 rounded-full ${colors[color]} ring-2 ring-white shadow-sm`} />
-        <span className="text-xs text-slate-600 font-medium">{label}</span>
+        <span className="text-sm text-slate-600 font-medium">{label}</span>
       </div>
       {count !== undefined && (
-        <span className="text-xs font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded-md min-w-[1.5rem] text-center">{count}</span>
+        <span className="text-sm font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded-md min-w-[1.5rem] text-center">{count}</span>
       )}
     </div>
   );
