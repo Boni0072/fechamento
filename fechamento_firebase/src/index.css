@@ -8,7 +8,11 @@
   box-sizing: border-box;
 }
 
+/* Fonte padrão */
 body {
+    font-size: 16px; /* Tamanho base (pode ajustar) */
+    line-height: 1.6;
+
   font-family: 'Inter', sans-serif;
   background-color: #f8fafc;
 }
@@ -47,6 +51,10 @@ body {
   animation: fadeIn 0.3s ease-out;
 }
 
+/* Classe para aumentar a fonte em 20% */
+.fonte-aumentada {
+    font-size: 1.2em; /* 1.2em = 120% do tamanho base */
+}
 .animate-slideIn {
   animation: slideIn 0.3s ease-out;
 }

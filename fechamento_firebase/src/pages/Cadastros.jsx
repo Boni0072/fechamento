@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
+import { getFirestore, doc, onSnapshot, collection, getDocs, writeBatch, getDoc } from 'firebase/firestore';
+import { getDatabase, ref, get, remove } from 'firebase/database';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { 
@@ -9,7 +10,6 @@ import {
   getTemplates, criarTemplate, deletarTemplate
 } from '../services/database';
 import { Plus, Trash2, Calendar, Users, FolderTree, FileText } from 'lucide-react';
-import { checkPermission } from './permissionUtils';
 
 export default function Cadastros() {
   const { empresaAtual } = useAuth();
@@ -38,13 +38,22 @@ export default function Cadastros() {
     }
   }, [authUser, empresaAtual]);
 
-  // Restrição removida
   const autorizado = true;
 
   useEffect(() => {
     if (!empresaAtual) return;
     
-    const unsubPeriodos = getPeriodos(empresaAtual.id, setPeriodos);
+    const unsubPeriodos = getPeriodos(empresaAtual.id, (data) => {
+      const sortedData = (data || []).sort((a, b) => {
+        if (b.ano !== a.ano) return b.ano - a.ano;
+        if (b.mes !== a.mes) return b.mes - a.mes;
+        return a.id.localeCompare(b.id);
+      });
+      const periodosUnicos = sortedData.filter((item, index, self) =>
+          index === self.findIndex(p => p.mes === item.mes && p.ano === item.ano)
+      );
+      setPeriodos(periodosUnicos);
+    });
     const unsubAreas = getAreas(empresaAtual.id, setAreas);
     const unsubResp = getResponsaveis(empresaAtual.id, setResponsaveis);
     const unsubTemplates = getTemplates(empresaAtual.id, setTemplates);
@@ -84,14 +93,12 @@ export default function Cadastros() {
   return (
     <div className="animate-fadeIn">
       <div className="flex items-center gap-4 mb-6">
-        <img src="/contabil.png" alt="Logo Contábil" className="w-36 h-36 object-contain" />
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Cadastros</h1>
           <p className="text-slate-500">Gerencie períodos, áreas, responsáveis e templates</p>
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="flex gap-2 mb-6 border-b border-slate-200">
         <TabButton active={tab === 'periodos'} onClick={() => setTab('periodos')} icon={<Calendar className="w-4 h-4" />} label="Períodos" />
         <TabButton active={tab === 'areas'} onClick={() => setTab('areas')} icon={<FolderTree className="w-4 h-4" />} label="Áreas" />
@@ -99,7 +106,6 @@ export default function Cadastros() {
         <TabButton active={tab === 'templates'} onClick={() => setTab('templates')} icon={<FileText className="w-4 h-4" />} label="Templates" />
       </div>
 
-      {/* Conteúdo */}
       {tab === 'periodos' && <PeriodosTab empresaId={empresaAtual.id} periodos={periodos} />}
       {tab === 'areas' && <AreasTab empresaId={empresaAtual.id} areas={areas} />}
       {tab === 'responsaveis' && <ResponsaveisTab empresaId={empresaAtual.id} responsaveis={responsaveis} areas={areas} />}
@@ -124,16 +130,98 @@ function TabButton({ active, onClick, icon, label }) {
   );
 }
 
+
+
 function PeriodosTab({ empresaId, periodos }) {
   const [mes, setMes] = useState(new Date().getMonth() + 1);
-  const [ano, setAno] = useState(new Date().getFullYear());
+  const [ano, setAno] = useState(new Date().getFullYear()); 
 
   const handleCriar = async () => {
+    const duplicado = periodos.some(p => p.mes === mes && p.ano === ano);
+    if (duplicado) {
+      alert('Este período já está cadastrado.');
+      return;
+    }
     await criarPeriodo(empresaId, { mes, ano });
   };
 
   const handleFechar = async (periodoId) => {
     await atualizarPeriodo(empresaId, periodoId, { status: 'fechado' });
+  };
+
+  const handleDeletar = async (periodoId) => {
+    const db = getFirestore();
+    let periodoData = periodos.find(p => p.id === periodoId);
+
+    if (!periodoData || !periodoData.mes || !periodoData.ano) {
+      try {
+        const docRef = doc(db, 'tenants', empresaId, 'periodos', periodoId);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          periodoData = { id: docSnap.id, ...docSnap.data() };
+        }
+      } catch (e) {
+        console.warn("Erro ao buscar dados do período:", e);
+      }
+    }
+
+    const label = periodoData && periodoData.mes && periodoData.ano 
+      ? `${periodoData.mes}/${periodoData.ano}` 
+      : `(ID: ${periodoId})`;
+
+    if (window.confirm(`Tem certeza que deseja excluir o período ${label}?`)) {
+      try {
+        // 1. FIRESTORE: Exclusão via Batch
+        const batch = writeBatch(db);
+        const periodosRef = collection(db, 'tenants', empresaId, 'periodos');
+        const snapshot = await getDocs(periodosRef);
+        
+        const targetMes = periodoData ? parseInt(periodoData.mes, 10) : null;
+        const targetAno = periodoData ? parseInt(periodoData.ano, 10) : null;
+
+        snapshot.docs.forEach(docSnap => {
+          const d = docSnap.data();
+          const isSameId = docSnap.id === periodoId;
+          const isSameDate = targetMes && targetAno && 
+                             parseInt(d.mes, 10) === targetMes && 
+                             parseInt(d.ano, 10) === targetAno;
+
+          if (isSameId || isSameDate) {
+            batch.delete(docSnap.ref);
+          }
+        });
+        await batch.commit();
+        
+        // 2. REALTIME DATABASE: Exclusão Direta baseada na estrutura do projeto
+        const rtdb = getDatabase();
+        
+        // Conforme services/database.js, os períodos ficam em `periodos/${empresaId}/${periodoId}`
+        const rtdbPath = `periodos/${empresaId}/${periodoId}`;
+        console.log("Tentando excluir no RTDB:", rtdbPath);
+        
+        await remove(ref(rtdb, rtdbPath)).catch(e => console.log("Erro ao remover no RTDB:", e));
+
+        // Limpeza extra por data caso existam duplicatas no mesmo nó
+        if (targetMes && targetAno) {
+          const rtdbListRef = ref(rtdb, `periodos/${empresaId}`);
+          const rtdbSnap = await get(rtdbListRef);
+          
+          if (rtdbSnap.exists()) {
+            rtdbSnap.forEach(child => {
+              const val = child.val();
+              if (parseInt(val.mes, 10) === targetMes && parseInt(val.ano, 10) === targetAno) {
+                remove(child.ref).catch(() => {});
+              }
+            });
+          }
+        }
+
+        alert(`Período excluído com sucesso!`);
+      } catch (error) {
+        console.error("Erro ao excluir período:", error);
+        alert("Erro ao excluir: " + error.message);
+      }
+    }
   };
 
   return (
@@ -180,14 +268,23 @@ function PeriodosTab({ empresaId, periodos }) {
                 {periodo.status === 'aberto' ? 'Aberto' : 'Fechado'}
               </span>
             </div>
-            {periodo.status === 'aberto' && (
+            <div className="flex items-center gap-3">
+              {periodo.status === 'aberto' && (
+                <button
+                  onClick={() => handleFechar(periodo.id)}
+                  className="text-sm text-slate-500 hover:text-slate-700"
+                >
+                  Fechar período
+                </button>
+              )}
               <button
-                onClick={() => handleFechar(periodo.id)}
-                className="text-sm text-slate-500 hover:text-slate-700"
+                onClick={() => handleDeletar(periodo.id)}
+                className="p-1 text-slate-400 hover:text-red-600 transition-colors"
+                title="Excluir Período"
               >
-                Fechar período
+                <Trash2 className="w-4 h-4" />
               </button>
-            )}
+            </div>
           </div>
         ))}
         {periodos.length === 0 && (
@@ -208,8 +305,13 @@ function AreasTab({ empresaId, areas }) {
   };
 
   const handleDeletar = async (areaId) => {
-    if (confirm('Deseja excluir esta área?')) {
-      await deletarArea(empresaId, areaId);
+    if (window.confirm('Deseja excluir esta área?')) {
+      try {
+        await deletarArea(empresaId, areaId);
+      } catch (error) {
+        console.error("Erro ao excluir área:", error);
+        alert("Erro ao excluir área: " + error.message);
+      }
     }
   };
 
@@ -266,8 +368,13 @@ function ResponsaveisTab({ empresaId, responsaveis, areas }) {
   };
 
   const handleDeletar = async (respId) => {
-    if (confirm('Deseja excluir este responsável?')) {
-      await deletarResponsavel(empresaId, respId);
+    if (window.confirm('Deseja excluir este responsável?')) {
+      try {
+        await deletarResponsavel(empresaId, respId);
+      } catch (error) {
+        console.error("Erro ao excluir responsável:", error);
+        alert("Erro ao excluir responsável: " + error.message);
+      }
     }
   };
 
@@ -347,8 +454,13 @@ function TemplatesTab({ empresaId, templates, areas, responsaveis }) {
   };
 
   const handleDeletar = async (templateId) => {
-    if (confirm('Deseja excluir este template?')) {
-      await deletarTemplate(empresaId, templateId);
+    if (window.confirm('Deseja excluir este template?')) {
+      try {
+        await deletarTemplate(empresaId, templateId);
+      } catch (error) {
+        console.error("Erro ao excluir template:", error);
+        alert("Erro ao excluir template: " + error.message);
+      }
     }
   };
 
@@ -404,7 +516,7 @@ function TemplatesTab({ empresaId, templates, areas, responsaveis }) {
       </div>
 
       <div className="space-y-2">
-        {templates.sort((a, b) => a.ordem - b.ordem).map(template => (
+        {[...templates].sort((a, b) => a.ordem - b.ordem).map(template => (
           <div key={template.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
             <div className="flex items-center gap-4">
               <span className="text-sm font-medium text-slate-500">D+{template.ordem}</span>

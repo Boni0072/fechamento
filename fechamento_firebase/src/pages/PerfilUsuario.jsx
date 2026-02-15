@@ -205,7 +205,6 @@ const PerfilUsuario = () => {
     <div className="max-w-3xl mx-auto mt-8 p-6 bg-white rounded-lg shadow-md">
       <div className="flex justify-between items-center mb-6 border-b pb-2">
         <div className="flex items-center gap-4">
-          <img src="/contabil.png" alt="Logo Contábil" className="w-36 h-36 object-contain" />
           <h1 className="text-2xl font-bold text-gray-800">Meu Perfil</h1>
         </div>
         {dados.perfilAcesso === 'Admin' && (

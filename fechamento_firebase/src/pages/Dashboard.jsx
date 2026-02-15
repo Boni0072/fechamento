@@ -2,17 +2,20 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
-import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
+import { getFirestore, doc, onSnapshot, collection, getDocs, writeBatch, deleteDoc } from 'firebase/firestore';
 import { getPeriodos, getEtapas } from '../services/database';
-import { Clock, AlertTriangle, Activity, Target, X, Info, RefreshCw } from 'lucide-react';
+import { Clock, AlertTriangle, Activity, Target, X, Info, RefreshCw, ChevronDown, ChevronUp, Trophy } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { empresaAtual } = useAuth();
+  const { empresaAtual, empresas, selecionarEmpresa } = useAuth();
   const { loading: loadingPermissoes, user: authUser } = usePermissao('dashboard');
   const [userProfile, setUserProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
+
+  // CORREÇÃO LÓGICA: Sincroniza viewAllCompanies com a seleção da Sidebar
+  const viewAllCompanies = !empresaAtual;
 
   useEffect(() => {
     if (authUser && authUser.id && empresaAtual && empresaAtual.id) {
@@ -41,6 +44,7 @@ export default function Dashboard() {
   const [selectedStatus, setSelectedStatus] = useState(null);
   const [empresaDados, setEmpresaDados] = useState(null);
   const [syncing, setSyncing] = useState(false);
+  const [showResponsavel, setShowResponsavel] = useState(false);
   const [kpis, setKpis] = useState({
     total: 0,
     concluidas: 0,
@@ -54,54 +58,125 @@ export default function Dashboard() {
     mediaAtraso: 0,
     topGargalos: [],
     desempenhoPorArea: [],
-    desempenhoPorResponsavel: []
+    desempenhoPorResponsavel: [],
+    desempenhoPorEmpresa: [],
+    rankingApoio: []
   });
 
   useEffect(() => {
-    if (!empresaAtual) return;
+    if (!empresaAtual && (!empresas || empresas.length === 0)) return;
     
-    // Busca dados atualizados da empresa em tempo real
     const db = getFirestore();
-    const empresaRef = doc(db, 'tenants', empresaAtual.id);
-    const unsubEmpresa = onSnapshot(empresaRef, (snapshot) => {
-      setEmpresaDados({ id: empresaAtual.id, ...snapshot.data() });
-    });
+    let unsubEmpresa = () => {};
 
-    const unsubscribe = getPeriodos(empresaAtual.id, (data) => {
-      setPeriodos(data);
-      if (data.length > 0 && !periodoSelecionado) {
-        setPeriodoSelecionado(data[0]);
-      }
-    });
+    if (empresaAtual) {
+      const empresaRef = doc(db, 'tenants', empresaAtual.id);
+      unsubEmpresa = onSnapshot(empresaRef, (snapshot) => {
+        setEmpresaDados({ id: empresaAtual.id, ...snapshot.data() });
+      });
+    }
+
+    let unsubscribe;
+
+    if (viewAllCompanies) {
+      const unsubscribes = [];
+      const allPeriodsMap = new Map();
+
+      empresas.forEach(emp => {
+        const unsub = getPeriodos(emp.id, (data) => {
+          data.forEach(p => {
+            const key = `${p.mes}-${p.ano}`;
+            if (!allPeriodsMap.has(key)) {
+              allPeriodsMap.set(key, { mes: p.mes, ano: p.ano, id: key });
+            }
+          });
+          
+          const sortedData = Array.from(allPeriodsMap.values()).sort((a, b) => {
+            if (b.ano !== a.ano) return b.ano - a.ano;
+            if (b.mes !== a.mes) return b.mes - a.mes;
+            return 0;
+          });
+          
+          setPeriodos(sortedData);
+          setPeriodoSelecionado(prev => {
+            if (!prev && sortedData.length > 0) return sortedData[0];
+            if (prev) {
+              const match = sortedData.find(p => p.mes === prev.mes && p.ano === prev.ano);
+              return match || sortedData[0] || null;
+            }
+            return null;
+          });
+        });
+        unsubscribes.push(unsub);
+      });
+      unsubscribe = () => unsubscribes.forEach(u => u());
+    } else {
+      unsubscribe = getPeriodos(empresaAtual.id, (data) => {
+        const sortedData = (data || []).sort((a, b) => {
+          if (b.ano !== a.ano) return b.ano - a.ano;
+          if (b.mes !== a.mes) return b.mes - a.mes;
+          return a.id.localeCompare(b.id);
+        });
+
+        const periodosUnicos = sortedData.filter((item, index, self) =>
+          index === self.findIndex(p => p.mes === item.mes && p.ano === item.ano)
+        );
+
+        setPeriodos(periodosUnicos);
+        if (periodosUnicos.length > 0 && !periodoSelecionado) {
+          setPeriodoSelecionado(periodosUnicos[0]);
+        }
+      });
+    }
+
     return () => {
       unsubscribe();
       unsubEmpresa();
     };
-  }, [empresaAtual]);
+  }, [empresaAtual, viewAllCompanies, empresas]);
 
   useEffect(() => {
-    if (!empresaAtual || !periodoSelecionado) return;
-    const unsubscribe = getEtapas(empresaAtual.id, periodoSelecionado.id, (data) => {
-      // 1. Filtra duplicatas técnicas (mesmo ID)
-      const uniqueById = (data || []).filter((item, index, self) => 
-        index === self.findIndex((t) => t.id === item.id)
-      );
-      
-      // 2. Filtra duplicatas lógicas (mesmo Nome ou Código) para evitar visualização repetida
-      const uniqueByContent = (uniqueById || []).filter((item, index, self) => 
-        index === self.findIndex((t) => (t.codigo && t.codigo === item.codigo) || (!t.codigo && t.nome === item.nome))
-      );
+    if ((!empresaAtual && !viewAllCompanies) || !periodoSelecionado) return;
 
-      setEtapas(uniqueByContent);
-      calcularKpis(uniqueByContent);
-    });
-    return () => unsubscribe();
-  }, [empresaAtual, periodoSelecionado]);
+    let unsubscribe;
 
+    if (viewAllCompanies) {
+      const unsubscribes = [];
+      const etapasMap = new Map();
+
+      empresas.forEach(emp => {
+        const unsubPeriodos = getPeriodos(emp.id, (periodsData) => {
+          const match = periodsData.find(p => p.mes === periodoSelecionado.mes && p.ano === periodoSelecionado.ano);
+          if (match) {
+            const unsubEtapas = getEtapas(emp.id, match.id, (etapasData) => {
+              etapasData.forEach(e => {
+                const uniqueId = `${emp.id}_${e.id}`;
+                etapasMap.set(uniqueId, { ...e, originalId: e.id, empresaId: emp.id, empresaNome: emp.nome });
+              });
+              const allEtapas = Array.from(etapasMap.values());
+              setEtapas(allEtapas);
+              calcularKpis(allEtapas);
+            });
+            unsubscribes.push(unsubEtapas);
+          }
+        });
+        unsubscribes.push(unsubPeriodos);
+      });
+      unsubscribe = () => unsubscribes.forEach(u => u());
+    } else {
+      unsubscribe = getEtapas(empresaAtual.id, periodoSelecionado.id, (data) => {
+        const uniqueById = (data || []).filter((item, index, self) => index === self.findIndex((t) => t.id === item.id));
+        const uniqueByContent = (uniqueById || []).filter((item, index, self) => index === self.findIndex((t) => (t.codigo && t.codigo === item.codigo) || (!t.codigo && t.nome === item.nome)));
+          setEtapas(uniqueByContent);
+        calcularKpis(uniqueByContent);
+      });
+    }
+    return () => unsubscribe && unsubscribe();
+  }, [empresaAtual, periodoSelecionado, viewAllCompanies, empresas]);
   const handleSync = async () => {
     const dados = empresaDados || empresaAtual;
     if (!dados?.spreadsheetId) {
-      if (window.confirm("Esta empresa não possui uma planilha configurada. Deseja ir para a tela de Empresas para configurar agora?")) {
+      if (window.confirm("Esta empresa não possui uma planilha configurada para sincronização.\n\nOs dados exibidos estão salvos no banco de dados do sistema.\n\nDeseja configurar uma planilha agora para permitir atualizações?")) {
         navigate('/empresas');
       }
       return;
@@ -114,7 +189,8 @@ export default function Dashboard() {
     
     setSyncing(true);
     try {
-      const url = `https://docs.google.com/spreadsheets/d/${dados.spreadsheetId}/gviz/tq?tqx=out:csv&gid=0&t=${Date.now()}`;
+      const sheetParam = dados.sheetName ? `&sheet=${encodeURIComponent(dados.sheetName)}` : '&gid=0';
+      const url = `https://docs.google.com/spreadsheets/d/${dados.spreadsheetId}/gviz/tq?tqx=out:csv${sheetParam}&t=${Date.now()}`;
       const response = await fetch(url, { cache: 'no-store' });
       if (!response.ok) throw new Error('Erro ao conectar com a planilha.');
       
@@ -127,17 +203,23 @@ export default function Dashboard() {
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const data = XLSX.utils.sheet_to_json(sheet, { raw: true });
 
+      // Busca dados atuais do banco para comparação precisa e exclusão de itens removidos
+      const db = getFirestore();
+      const etapasRef = collection(db, 'tenants', empresaAtual.id, 'periodos', periodoSelecionado.id, 'etapas');
+      const snapshot = await getDocs(etapasRef);
+      const currentDocs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+
       // Processamento inicial (tentando manter histórico)
-      let processedSteps = processData(data, etapas);
+      let processedSteps = processData(data, currentDocs);
 
       if (processedSteps.length > 0) {
         let keepHistory = true;
 
         // Pergunta sobre o histórico (Status/Datas)
-        if (etapas.length > 0) {
+        if (currentDocs.length > 0) {
           keepHistory = window.confirm(
             `Encontrados ${processedSteps.length} registros na planilha.\n` +
-            `Existem ${etapas.length} registros no sistema.\n\n` +
+            `Existem ${currentDocs.length} registros no sistema.\n\n` +
             `[OK] = MANTER histórico (Status, Datas, Responsáveis) e atualizar dados.\n` +
             `[Cancelar] = LIMPAR TUDO (Resetar status para 'Pendente' e apagar histórico).`
           );
@@ -152,17 +234,42 @@ export default function Dashboard() {
           processedSteps = processData(data, []); // Passa array vazio para ignorar histórico
         }
 
-        // Confirmação final de substituição
-        if (processedSteps.length > 0) {
-          // A lógica de gravação direta no banco foi removida daqui pois dependia de imports do Realtime Database
-          // que não estão presentes neste arquivo (push, ref, set).
-          // Recomendação: Realizar a sincronização completa pela tela de "Etapas" que já possui essa lógica.
-          alert(
-            "Para concluir a sincronização e salvar os dados no banco, por favor utilize a tela de 'Etapas'.\n\n" +
-            "O Dashboard serve apenas para visualização dos indicadores."
-          );
-          setSyncing(false);
+        // Prepara lista de operações
+        const operations = [];
+        const keptIds = new Set();
+
+        // Adiciona operações de atualização/criação
+        processedSteps.forEach(step => {
+          const docRef = step.id ? doc(etapasRef, step.id) : doc(etapasRef);
+          const { id, ...stepData } = step;
+          operations.push({ type: 'set', ref: docRef, data: stepData });
+          if (step.id) keptIds.add(step.id);
+        });
+
+        // Adiciona operações de exclusão para itens que não estão mais na planilha
+        const docsToDelete = currentDocs.filter(d => !keptIds.has(d.id));
+        docsToDelete.forEach(d => {
+          operations.push({ type: 'delete', ref: doc(etapasRef, d.id) });
+        });
+
+        // Executa em lotes de 400 (limite do Firestore é 500)
+        const BATCH_SIZE = 400;
+        for (let i = 0; i < operations.length; i += BATCH_SIZE) {
+          const batch = writeBatch(db);
+          const chunk = operations.slice(i, i + BATCH_SIZE);
+          
+          chunk.forEach(op => {
+            if (op.type === 'set') {
+              batch.set(op.ref, op.data, { merge: true });
+            } else if (op.type === 'delete') {
+              batch.delete(op.ref);
+            }
+          });
+          
+          await batch.commit();
         }
+
+        alert(`Sincronização concluída com sucesso!\n\nItens atualizados: ${processedSteps.length}\nItens removidos: ${docsToDelete.length}`);
       } else {
         alert('Nenhuma etapa encontrada na planilha.');
       }
@@ -295,6 +402,38 @@ export default function Dashboard() {
       percentual: stats.total > 0 ? Math.round((stats.concluidas / stats.total) * 100) : 0
     })).sort((a, b) => b.percentual - a.percentual);
 
+    // Desempenho por Empresa
+    const empStats = {};
+    dados.forEach(e => {
+      const emp = e.empresaNome || empresaDados?.nome || empresaAtual?.nome || 'Empresa';
+      if (!empStats[emp]) empStats[emp] = { total: 0, concluidas: 0 };
+      empStats[emp].total++;
+      if (e.status === 'concluido' || e.status === 'concluido_atraso') empStats[emp].concluidas++;
+    });
+    const desempenhoPorEmpresa = Object.entries(empStats).map(([emp, stats]) => ({
+      nome: emp,
+      total: stats.total,
+      concluidas: stats.concluidas,
+      percentual: stats.total > 0 ? Math.round((stats.concluidas / stats.total) * 100) : 0
+    })).sort((a, b) => b.percentual - a.percentual);
+
+    // Ranking de Apoio (Quem mais executou tarefas de outros)
+    const apoioStats = {};
+    dados.forEach(e => {
+      if (e.executadoPor && e.responsavel) {
+        const executor = String(e.executadoPor).trim();
+        const responsavel = String(e.responsavel).trim();
+        if (executor && responsavel && executor.toLowerCase() !== responsavel.toLowerCase()) {
+           if (!apoioStats[executor]) apoioStats[executor] = 0;
+           apoioStats[executor]++;
+        }
+      }
+    });
+    const rankingApoio = Object.entries(apoioStats)
+      .map(([nome, count]) => ({ nome, count }))
+      .sort((a, b) => b.count - a.count)
+
+
     setKpis({
       total,
       concluidas: concluidasTotal,
@@ -308,10 +447,12 @@ export default function Dashboard() {
       mediaAtraso,
       topGargalos,
       desempenhoPorArea,
-      desempenhoPorResponsavel
+      desempenhoPorResponsavel,
+      desempenhoPorEmpresa,
+      rankingApoio
     });
   };
-
+  
   // Dados para o Gráfico de Rosca
   const chartData = [
     { key: 'concluidas_no_prazo', label: 'Concluídas no Prazo', value: kpis.concluidasNoPrazo, color: '#22c55e', twColor: 'green' },
@@ -334,7 +475,7 @@ export default function Dashboard() {
     );
   }
 
-  if (!empresaAtual) {
+  if (!empresaAtual && !viewAllCompanies) {
     return (
       <div className="flex flex-col items-center justify-center h-96">
         <p className="text-slate-500 mb-4">Nenhuma empresa selecionada</p>
@@ -359,35 +500,37 @@ export default function Dashboard() {
           </div>
         </div>
         
-        <button
-          onClick={handleSync}
-          disabled={syncing}
-          className={`flex items-center gap-2 px-4 py-2 border rounded-lg transition-colors mr-3 ${
-            !(empresaDados || empresaAtual)?.spreadsheetId 
-              ? 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200' 
-              : 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
-          } ${syncing ? 'opacity-50 cursor-wait' : ''}`}
-          title={!(empresaDados || empresaAtual)?.spreadsheetId ? "Clique para saber como configurar" : "Atualizar dados da planilha Google"}
-        >
-          <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-          <span className="hidden sm:inline">{syncing ? 'Sincronizando...' : 'Sincronizar'}</span>
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleSync}
+            disabled={syncing || viewAllCompanies}
+            className={`flex items-center gap-2 px-4 py-2 border rounded-lg transition-colors ${
+              !(empresaDados || empresaAtual)?.spreadsheetId || viewAllCompanies
+                ? 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200' 
+                : 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
+            } ${syncing ? 'opacity-50 cursor-wait' : ''} ${viewAllCompanies ? 'cursor-not-allowed opacity-50' : ''}`}
+            title={!(empresaDados || empresaAtual)?.spreadsheetId ? "Clique para saber como configurar" : "Atualizar dados da planilha Google"}
+          >
+            <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">{syncing ? 'Sincronizando...' : 'Sincronizar'}</span>
+          </button>
 
-        <select
-          value={periodoSelecionado?.id || ''}
-          onChange={(e) => {
-            const periodo = periodos.find(p => p.id === e.target.value);
-            setPeriodoSelecionado(periodo);
-          }}
-          className="px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-        >
-          {periodos.length === 0 && <option value="">Nenhum período</option>}
-          {periodos.map(p => (
-            <option key={p.id} value={p.id}>
-              {p.mes}/{p.ano}
-            </option>
-          ))}
-        </select>
+          <select
+            value={periodoSelecionado?.id || ''}
+            onChange={(e) => {
+              const periodo = periodos.find(p => p.id === e.target.value);
+              setPeriodoSelecionado(periodo);
+            }}
+            className="px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+          >
+            {periodos.length === 0 && <option value="">Nenhum período</option>}
+            {periodos.map(p => (
+              <option key={p.id} value={p.id}>
+                {p.mes}/{p.ano}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 mb-6">
@@ -447,11 +590,11 @@ export default function Dashboard() {
         <div className="lg:col-span-3 flex flex-col gap-6">
           {/* Cards de Indicadores */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Card
+            <Card 
               title="Conclusão Geral"
               value={`${kpis.percentualConcluido}%`}
               subtitle={`${kpis.concluidas}/${kpis.total} etapas finalizadas`}
-              icon={<Activity className="w-6 h-6" />}
+              icon={<Activity className="w-6 h-6" />} 
               color="blue"
             />
             <Card
@@ -532,18 +675,53 @@ export default function Dashboard() {
       {/* Gráficos de Desempenho */}
       <div className="grid grid-cols-1 gap-6 mb-6">
 
+        {/* Evolução por Empresas */}
+        <div className="bg-white rounded-xl shadow-sm p-6">
+          <h2 className="text-lg font-semibold text-slate-800 mb-4">Evolução por Empresas</h2>
+          <div className="space-y-5">
+            {kpis.desempenhoPorEmpresa.length === 0 ? (
+               <p className="text-sm text-slate-400 text-center py-4">Nenhum dado disponível</p>
+            ) : (
+              kpis.desempenhoPorEmpresa.map((item, idx) => (
+                <div key={idx} className="space-y-1">
+                  <div className="flex justify-between text-sm font-medium text-slate-700">
+                    <span>{item.nome}</span>
+                    <span className="font-bold text-green-600">{item.percentual}%</span>
+                  </div>
+                  <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-green-600 rounded-full transition-all duration-500"
+                      style={{ width: `${item.percentual}%` }}
+                    />
+                  </div>
+                  <div className="text-xs text-slate-400 text-right">
+                    {item.concluidas}/{item.total} etapas concluídas
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
         {/* Desempenho por Responsável */}
         <div className="bg-white rounded-xl shadow-sm p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-slate-800">Desempenho por Responsável</h2>
-            <div className="group relative">
-              <Info className="w-4 h-4 text-slate-400 cursor-help" />
-              <div className="absolute right-0 bottom-full mb-2 w-64 p-2 bg-slate-800 text-white text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none font-normal">
-                O percentual indica a taxa de conclusão (Concluídas/Total). Clique em um usuário para ver o Radar de Performance detalhado.
-                <div className="absolute top-full right-1 border-4 border-transparent border-t-slate-800"></div>
+          <div 
+            className="flex items-center justify-between mb-4 cursor-pointer"
+            onClick={() => setShowResponsavel(!showResponsavel)}
+          >
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-semibold text-slate-800">Desempenho por Responsável</h2>
+              <div className="group relative" onClick={(e) => e.stopPropagation()}>
+                <Info className="w-4 h-4 text-slate-400 cursor-help" />
+                <div className="absolute right-0 bottom-full mb-2 w-64 p-2 bg-slate-800 text-white text-xs rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none font-normal">
+                  O percentual indica a taxa de conclusão (Concluídas/Total). Clique em um usuário para ver o Radar de Performance detalhado.
+                  <div className="absolute top-full right-1 border-4 border-transparent border-t-slate-800"></div>
+                </div>
               </div>
             </div>
+            {showResponsavel ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
           </div>
+          {showResponsavel && (
           <div className="space-y-4 max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
             {kpis.desempenhoPorResponsavel.length === 0 ? (
               <p className="text-sm text-slate-400 text-center py-4">Nenhum dado disponível</p>
@@ -560,7 +738,7 @@ export default function Dashboard() {
                   </div>
                   <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                     <div 
-                      className="h-full bg-green-500 rounded-full transition-all duration-500" 
+                      className="h-full bg-blue-600 rounded-full transition-all duration-500" 
                       style={{ width: `${item.percentual}%` }}
                     />
                   </div>
@@ -568,6 +746,70 @@ export default function Dashboard() {
               ))
             )}
           </div>
+          )}
+        </div>
+
+        {/* Ranking de Apoio (Podium) */}
+        <div className="bg-white rounded-xl shadow-sm p-6">
+          <div className="flex items-center gap-2 mb-6">
+            <Trophy className="w-5 h-5 text-yellow-500" />
+            <div>
+              <h2 className="text-lg font-semibold text-slate-800">Campeões de Apoio</h2>
+              <p className="text-xs text-slate-500">Quem mais executou atividades de outros</p>
+            </div>
+          </div>
+          
+          {kpis.rankingApoio.length === 0 ? (
+             <p className="text-sm text-slate-400 text-center py-4">Nenhum dado disponível</p>
+          ) : (
+            <div className="flex items-end justify-center gap-2 sm:gap-4 h-48 pt-4">  
+              {/* 2nd Place */}
+              <div className="flex flex-col items-center w-1/3 group">
+                {kpis.rankingApoio[1] ? (
+                  <>
+                    <div className="mb-2 text-center transition-transform group-hover:-translate-y-1">
+                      <span className="block text-xs font-bold text-slate-600 truncate max-w-[80px] sm:max-w-[120px]">{kpis.rankingApoio[1].nome}</span>
+                      <span className="text-[10px] text-slate-400 font-medium">{kpis.rankingApoio[1].count} tarefas</span>
+                    </div>
+                    <div className="w-full bg-slate-200 rounded-t-lg h-24 flex items-end justify-center pb-2 relative border-t-4 border-slate-300">
+                       <div className="text-2xl font-bold text-slate-400">2</div>
+                    </div>
+                  </>
+                ) : <div className="w-full h-24" />}
+              </div>
+              
+              {/* 1st Place */}
+              <div className="flex flex-col items-center w-1/3 group">
+                {kpis.rankingApoio[0] ? (
+                  <>
+                    <div className="mb-2 text-center transition-transform group-hover:-translate-y-1">
+                      <div className="text-yellow-500 mb-1 animate-bounce">👑</div>
+                      <span className="block text-sm font-bold text-slate-800 truncate max-w-[90px] sm:max-w-[140px]">{kpis.rankingApoio[0].nome}</span>
+                      <span className="text-xs text-slate-500 font-medium">{kpis.rankingApoio[0].count} tarefas</span>
+                    </div>
+                    <div className="w-full bg-yellow-100 border-t-4 border-yellow-400 rounded-t-lg h-32 flex items-end justify-center pb-2 shadow-sm relative">
+                       <div className="text-3xl font-bold text-yellow-600">1</div>
+                    </div>
+                  </>
+                ) : <div className="w-full h-32" />}
+              </div>
+
+              {/* 3rd Place */}
+              <div className="flex flex-col items-center w-1/3 group">
+                {kpis.rankingApoio[2] ? (
+                  <>
+                    <div className="mb-2 text-center transition-transform group-hover:-translate-y-1">
+                      <span className="block text-xs font-bold text-slate-600 truncate max-w-[80px] sm:max-w-[120px]">{kpis.rankingApoio[2].nome}</span>
+                      <span className="text-[10px] text-slate-400 font-medium">{kpis.rankingApoio[2].count} tarefas</span>
+                    </div>
+                    <div className="w-full bg-orange-100 rounded-t-lg h-16 flex items-end justify-center pb-2 relative border-t-4 border-orange-200">
+                       <div className="text-xl font-bold text-orange-400">3</div>
+                    </div>
+                  </>
+                ) : <div className="w-full h-16" />}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -757,11 +999,12 @@ function processData(data, existingSteps = []) {
       dataPrevista: dataPrevista,
       dataReal: dataReal,
       ordem: ordem,
-      codigo: (codigo !== undefined && codigo !== null) ? codigo : '',
+      codigo: (codigo !== undefined && codigo !== null) ? String(codigo) : '',
       observacoes: getVal(['Observações', 'observacoes']) || '',
       status: status,
       concluidoEm: concluidoEm,
-      quemConcluiu: quemConcluiu
+      quemConcluiu: quemConcluiu,
+      executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPor', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || ''
     });
   });
 
@@ -841,6 +1084,13 @@ function RadarModal({ userName, allEtapas, onClose }) {
   });
   const mediaAtraso = countAtraso > 0 ? somaDiasAtraso / countAtraso : 0;
 
+  const delegadas = userTasks.filter(e => {
+    if (!e.executadoPor) return false;
+    const executor = String(e.executadoPor).trim().toLowerCase();
+    const responsavel = String(userName).trim().toLowerCase();
+    return executor !== responsavel;
+  }).length;
+
   const metrics = [
     { 
       label: 'Conclusão', 
@@ -866,6 +1116,11 @@ function RadarModal({ userName, allEtapas, onClose }) {
       label: 'Eficiência', 
       value: Math.max(0, 100 - Math.round(mediaAtraso * 5)),
       desc: 'Penaliza atrasos longos (100 - 5 pontos por dia de atraso médio).'
+    },
+    { 
+      label: 'Delegação', 
+      value: total > 0 ? Math.round((delegadas / total) * 100) : 0,
+      desc: 'Tarefas executadas por terceiros (Executado Por ≠ Responsável).'
     }
   ];
 
@@ -1052,6 +1307,7 @@ function StatusDetailsModal({ statusType, etapas, onClose }) {
                   <th className="p-3 border-b whitespace-nowrap">Código</th>
                   <th className="p-3 border-b min-w-[200px]">Etapa</th>
                   <th className="p-3 border-b whitespace-nowrap">Responsável</th>
+                  <th className="p-3 border-b whitespace-nowrap">Executado Por</th>
                   <th className="p-3 border-b whitespace-nowrap">Prevista</th>
                   <th className="p-3 border-b whitespace-nowrap">Realizado</th>
                   <th className="p-3 border-b whitespace-nowrap text-center">Atraso (h)</th>
@@ -1064,6 +1320,7 @@ function StatusDetailsModal({ statusType, etapas, onClose }) {
                     <td className="p-3 font-medium text-slate-700 whitespace-nowrap">{item.codigo || '-'}</td>
                     <td className="p-3 text-slate-600">{item.nome}</td>
                     <td className="p-3 text-slate-600 whitespace-nowrap">{item.responsavel || 'Não atribuído'}</td>
+                    <td className="p-3 text-slate-600 whitespace-nowrap">{item.executadoPor || '-'}</td>
                     <td className="p-3 text-slate-600 whitespace-nowrap">
                       {item.dataPrevista ? new Date(item.dataPrevista).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
                     </td>

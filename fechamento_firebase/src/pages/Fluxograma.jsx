@@ -1,19 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getDatabase, ref, onValue, set, push, remove } from 'firebase/database';
-import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
+import { getFirestore, doc, onSnapshot, collection, getDocs, writeBatch } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { getPeriodos, getEtapas, getStatusColor, getStatusLabel, atualizarEtapa } from '../services/database';
 import { format, getDaysInMonth, addDays } from 'date-fns';
-import { X, Check, Clock, AlertTriangle, ChevronDown, ChevronUp, CalendarOff, RefreshCw, Calendar } from 'lucide-react';
+import { X, Check, Clock, AlertTriangle, ChevronDown, ChevronUp, CalendarOff, RefreshCw, Calendar, Users, FolderTree } from 'lucide-react';
 import TimelineBackground from './TimelineBackground';
 import * as XLSX from 'xlsx';
 import { checkPermission } from './permissionUtils';
 
 export default function Fluxograma() {
   const navigate = useNavigate();
-  const { empresaAtual } = useAuth();
+  const { empresaAtual, empresas, selecionarEmpresa } = useAuth();
   const { loading: loadingPermissoes, user: authUser } = usePermissao('fluxograma');
   const [userProfile, setUserProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
@@ -74,9 +73,20 @@ export default function Fluxograma() {
     });
 
     const unsubscribe = getPeriodos(empresaAtual.id, (data) => {
-      setPeriodos(data);
-      // Automatically select the first period of a new company
-      setPeriodoSelecionado(data.length > 0 ? data[0] : null);
+      // 1. Ordena primeiro para garantir determinismo
+      const sortedData = (data || []).sort((a, b) => {
+        if (b.ano !== a.ano) return b.ano - a.ano;
+        if (b.mes !== a.mes) return b.mes - a.mes;
+        return a.id.localeCompare(b.id);
+      });
+
+      // 2. Filtra duplicatas
+      const periodosUnicos = sortedData.filter((item, index, self) =>
+        index === self.findIndex(p => p.mes === item.mes && p.ano === item.ano)
+      );
+
+      setPeriodos(periodosUnicos);
+      setPeriodoSelecionado(periodosUnicos.length > 0 ? periodosUnicos[0] : null);
     });
 
     return () => {
@@ -137,7 +147,12 @@ export default function Fluxograma() {
       empresaAtual.id,
       periodoSelecionado.id,
       etapa.id,
-      { ...etapa, status: 'concluido', dataReal: new Date().toISOString().split('T')[0] },
+      { 
+        ...etapa, 
+        status: 'concluido', 
+        dataReal: new Date().toISOString(), 
+        executadoPor: userProfile.nome || userProfile.name || userProfile.email
+      },
       userProfile.id,
       userProfile.nome || userProfile.name
     );
@@ -146,7 +161,7 @@ export default function Fluxograma() {
   const handleSync = async () => {
     const dados = empresaDados || empresaAtual;
     if (!dados?.spreadsheetId) {
-      if (window.confirm("Esta empresa não possui uma planilha configurada. Deseja ir para a tela de Empresas para configurar agora?")) {
+      if (window.confirm("Esta empresa não possui uma planilha configurada para sincronização.\n\nOs dados exibidos estão salvos no banco de dados do sistema.\n\nDeseja configurar uma planilha agora para permitir atualizações?")) {
         navigate('/empresas');
       }
       return;
@@ -159,7 +174,8 @@ export default function Fluxograma() {
     
     setSyncing(true);
     try {
-      const url = `https://docs.google.com/spreadsheets/d/${dados.spreadsheetId}/gviz/tq?tqx=out:csv&gid=0&t=${Date.now()}`;
+      const sheetParam = dados.sheetName ? `&sheet=${encodeURIComponent(dados.sheetName)}` : '&gid=0';
+      const url = `https://docs.google.com/spreadsheets/d/${dados.spreadsheetId}/gviz/tq?tqx=out:csv${sheetParam}&t=${Date.now()}`;
       const response = await fetch(url, { cache: 'no-store' });
       if (!response.ok) throw new Error('Erro ao conectar com a planilha.');
       
@@ -172,17 +188,23 @@ export default function Fluxograma() {
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const data = XLSX.utils.sheet_to_json(sheet, { raw: true });
 
+      // Busca dados atuais do banco (Firestore) para comparação precisa
+      const db = getFirestore();
+      const etapasRef = collection(db, 'tenants', empresaAtual.id, 'periodos', periodoSelecionado.id, 'etapas');
+      const snapshot = await getDocs(etapasRef);
+      const currentDocs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+
       // Processamento inicial (tentando manter histórico)
-      let processedSteps = processData(data, etapas);
+      let processedSteps = processData(data, currentDocs);
 
       if (processedSteps.length > 0) {
         let keepHistory = true;
 
         // Pergunta sobre o histórico (Status/Datas)
-        if (etapas.length > 0) {
+        if (currentDocs.length > 0) {
           keepHistory = window.confirm(
             `Encontrados ${processedSteps.length} registros na planilha.\n` +
-            `Existem ${etapas.length} registros no sistema.\n\n` +
+            `Existem ${currentDocs.length} registros no sistema.\n\n` +
             `[OK] = MANTER histórico (Status, Datas, Responsáveis) e atualizar dados.\n` +
             `[Cancelar] = LIMPAR TUDO (Resetar status para 'Pendente' e apagar histórico).`
           );
@@ -199,33 +221,44 @@ export default function Fluxograma() {
 
         // Confirmação final de substituição
         if (processedSteps.length > 0) {
-          const db = getDatabase();
-          const etapasRef = ref(db, `tenants/${empresaAtual.id}/periodos/${periodoSelecionado.id}/etapas`);
-
           try {
-            // 1. Limpa visualmente e no banco (Reset Total)
-            setEtapas([]); 
-
-            // 2. Prepara os novos dados (Preservando IDs para evitar duplicação)
-            const updates = {};
+            // Prepara lista de operações (Batch)
+            const operations = [];
+            const keptIds = new Set();
             
             processedSteps.forEach(step => {
-              // Se já tem ID (veio do processData/match), usa ele. Se não, cria um novo.
-              const key = step.id || push(etapasRef).key;
+              const docRef = step.id ? doc(etapasRef, step.id) : doc(etapasRef);
               const { id, ...dados } = step;
               
-              updates[key] = {
+              const stepData = {
                 ...dados,
-                createdAt: new Date().toISOString(),
-                createdBy: userProfile?.id || 'importacao',
-                createdByName: userProfile?.nome || userProfile?.name || 'Importação'
+                createdAt: dados.createdAt || new Date().toISOString(),
+                createdBy: dados.createdBy || userProfile?.uid || userProfile?.id || 'importacao',
+                createdByName: dados.createdByName || userProfile?.nome || userProfile?.name || 'Importação'
               };
+
+              operations.push({ type: 'set', ref: docRef, data: stepData });
+              if (step.id) keptIds.add(step.id);
             });
             
-            // 3. Gravação Atômica (Substitui tudo)
-            await set(etapasRef, updates);
+            // Remove itens do banco que NÃO estão mais na planilha
+            const docsToDelete = currentDocs.filter(d => !keptIds.has(d.id));
+            docsToDelete.forEach(d => {
+              operations.push({ type: 'delete', ref: doc(etapasRef, d.id) });
+            });
+
+            // Executa em lotes de 400
+            const BATCH_SIZE = 400;
+            let opsCount = 0;
+            for (let i = 0; i < operations.length; i += BATCH_SIZE) {
+              const batch = writeBatch(db);
+              const chunk = operations.slice(i, i + BATCH_SIZE);
+              chunk.forEach(op => op.type === 'set' ? batch.set(op.ref, op.data, { merge: true }) : batch.delete(op.ref));
+              await batch.commit();
+              opsCount += chunk.length;
+            }
             
-            alert(`Sincronização concluída com sucesso!\nTotal de etapas: ${processedSteps.length}`);
+            alert(`Sincronização concluída com sucesso!\n\nOperações realizadas: ${opsCount}\n- Atualizados/Criados: ${processedSteps.length}\n- Excluídos: ${docsToDelete.length}`);
           } catch (err) {
             console.error(err);
             alert("Erro ao gravar no banco de dados: " + err.message);
@@ -381,23 +414,38 @@ export default function Fluxograma() {
               e.stopPropagation();
               setEtapaSelecionada(etapa);
             }}
-            className={`w-full py-2 pr-2 pl-7 rounded-lg shadow-sm text-left hover:shadow-md transition-all relative overflow-hidden group flex items-center gap-2 ${
-              etapa.status === 'atrasado' || isLate ? 'animate-blink-red' : 'bg-white border border-slate-200'
+            className={`w-full p-3 rounded-xl shadow-sm text-left hover:shadow-lg transition-all relative overflow-visible group flex flex-col gap-2 border-2 min-h-fit ${
+              etapa.status === 'atrasado' || isLate 
+                ? 'animate-blink-red border-red-300' 
+                : 'bg-white border-slate-200 hover:border-blue-300'
             }`}
           >
-            <div className={`absolute left-0 top-0 bottom-0 w-5 ${getStatusBorderColor(etapa)}`}></div>
+            {/* Barra lateral de status */}
+            <div className={`absolute left-0 top-0 bottom-0 w-1.5 rounded-l-lg ${getStatusBorderColor(etapa)}`}></div>
             
-            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-slate-50 border border-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-500">
-              D+{etapa.ordem}
+            <div className="flex items-start justify-between gap-2">
+              <div className="font-bold text-[13px] text-slate-900 leading-snug flex-1" title={etapa.nome}>
+                {etapa.codigo ? `${etapa.codigo} - ` : ''}{etapa.nome}
+              </div>
+              <div className="flex-shrink-0 px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-[10px] font-bold text-slate-600">
+                D+{etapa.ordem}
+              </div>
             </div>
 
-            <div className="min-w-0 flex-1">
-              <div className="font-medium text-xs text-slate-800 truncate" title={etapa.nome}>{etapa.nome}</div>
-              <div className="flex items-center gap-2 mt-0.5">
-                {etapa.responsavel && (
-                  <div className="text-[10px] text-slate-500 truncate" title={etapa.responsavel}>{etapa.responsavel}</div>
-                )}
-                <div className="text-[10px] text-slate-600 font-medium truncate" title={etapa.area}>{etapa.area}</div>
+            <div className="mt-1 bg-slate-50/80 p-1.5 rounded-lg border border-slate-100">
+              <div className="flex items-center gap-1.5 text-slate-700 flex-wrap">
+                <Users className="w-3 h-3 shrink-0 text-slate-400" />
+                <div className="text-[10px] leading-tight">
+                  <span className="text-slate-500 font-medium">Área:</span> <span className="font-bold">{etapa.area || 'Geral'}</span>
+                  <span className="mx-1.5 text-slate-300">|</span>
+                  <span className="text-slate-500 font-medium">Resp:</span> <span className="font-bold">{etapa.responsavel || 'Sem resp.'}</span>
+                  {etapa.executadoPor && (
+                    <>
+                      <span className="mx-1 text-slate-300">•</span>
+                      <span className="text-slate-500 font-medium">Exec:</span> <span className="font-bold">{etapa.executadoPor}</span>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           </button>
@@ -453,7 +501,6 @@ export default function Fluxograma() {
     <div className="animate-fadeIn">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4">
-          <img src="/contabil.png" alt="Logo Contábil" className="w-36 h-36 object-contain" />
           <div>
             <h1 className="text-2xl font-bold text-slate-800">Fluxograma do Fechamento</h1>
             <p className="text-slate-500">Visualização interativa das etapas do fechamento contábil</p>
@@ -545,6 +592,7 @@ export default function Fluxograma() {
               <option key={p.id} value={p.id}>{p.mes}/{p.ano}</option>
             ))}
           </select>
+
         </div>
       </div>
 
@@ -665,44 +713,91 @@ export default function Fluxograma() {
 
       {/* Modal de Detalhes */}
       {etapaSelecionada && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg animate-slideIn">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg animate-slideIn overflow-hidden border border-white/20">
             {(() => {
               const isLate = etapaSelecionada.dataPrevista && new Date(etapaSelecionada.dataPrevista) < new Date() && 
                              etapaSelecionada.status !== 'concluido' && 
                              etapaSelecionada.status !== 'concluido_atraso';
               
-              const headerColor = isLate ? 'bg-red-500' : getStatusColor(etapaSelecionada.status);
+              const headerColor = isLate ? 'bg-red-600' : getStatusColor(etapaSelecionada.status);
               const statusLabel = isLate ? 'Atrasado' : getStatusLabel(etapaSelecionada.status);
 
               return (
-                <div className={`p-4 rounded-t-2xl text-white ${headerColor}`}>
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-semibold">{etapaSelecionada.nome}</h3>
-                    <button onClick={() => setEtapaSelecionada(null)} className="p-1 hover:bg-white/20 rounded">
-                      <X className="w-5 h-5" />
+                <div className={`p-6 text-white ${headerColor} relative`}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="px-2 py-0.5 bg-white/20 rounded text-[10px] font-bold uppercase tracking-wider">D+{etapaSelecionada.ordem}</span>
+                        <span className="text-xs font-medium opacity-90">{statusLabel}</span>
+                      </div>
+                      <h3 className="text-xl font-bold leading-tight">{etapaSelecionada.nome}</h3>
+                    </div>
+                    <button onClick={() => setEtapaSelecionada(null)} className="p-2 hover:bg-white/20 rounded-full transition-colors">
+                      <X className="w-6 h-6" />
                     </button>
                   </div>
-                  <p className="text-sm opacity-80">{statusLabel}</p>
                 </div>
               );
             })()}
             
-            <div className="p-6 space-y-4">
-              <InfoRow label="Área" value={etapaSelecionada.area || '-'} />
-              <InfoRow label="Responsável" value={etapaSelecionada.responsavel || '-'} />
-              <InfoRow label="Data Prevista" value={etapaSelecionada.dataPrevista ? format(new Date(etapaSelecionada.dataPrevista), 'dd/MM/yyyy HH:mm') : '-'} />
-              <InfoRow label="Data Real" value={etapaSelecionada.dataReal ? format(new Date(etapaSelecionada.dataReal), 'dd/MM/yyyy HH:mm') : '-'} />
-              {etapaSelecionada.descricao && (
-                <div>
-                  <p className="text-sm text-slate-500">Descrição</p>
-                  <p className="text-slate-800">{etapaSelecionada.descricao}</p>
+            <div className="p-6 space-y-6">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Área</p>
+                  <p className="text-sm font-semibold text-slate-700">{etapaSelecionada.area || '-'}</p>
                 </div>
-              )}
-              {etapaSelecionada.observacoes && (
-                <div>
-                  <p className="text-sm text-slate-500">Observações</p>
-                  <p className="text-slate-800">{etapaSelecionada.observacoes}</p>
+                <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Responsável</p>
+                  <p className="text-sm font-semibold text-slate-700">{etapaSelecionada.responsavel || '-'}</p>
+                </div>
+                <div className="bg-blue-50 p-3 rounded-2xl border border-blue-100 col-span-2">
+                  <p className="text-[10px] font-bold text-blue-400 uppercase mb-1">Executado por</p>
+                  <input
+                    type="text"
+                    value={etapaSelecionada.executadoPor || ''}
+                    onChange={(e) => setEtapaSelecionada({ ...etapaSelecionada, executadoPor: e.target.value })}
+                    placeholder="Aguardando execução"
+                    className="w-full bg-transparent border-none p-0 text-sm font-bold text-blue-700 placeholder-blue-300 focus:ring-0 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-slate-400" />
+                    <span className="text-xs font-medium text-slate-500">Início Previsto</span>
+                  </div>
+                  <span className="text-xs font-bold text-slate-700">
+                    {etapaSelecionada.dataPrevista ? format(new Date(etapaSelecionada.dataPrevista), 'dd/MM/yyyy HH:mm') : '-'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <Check className="w-4 h-4 text-green-500" />
+                    <span className="text-xs font-medium text-slate-500">Data Real</span>
+                  </div>
+                  <span className="text-xs font-bold text-slate-700">
+                    {etapaSelecionada.dataReal ? format(new Date(etapaSelecionada.dataReal), 'dd/MM/yyyy HH:mm') : '-'}
+                  </span>
+                </div>
+              </div>
+
+              {(etapaSelecionada.descricao || etapaSelecionada.observacoes) && (
+                <div className="space-y-4 pt-2">
+                  {etapaSelecionada.descricao && (
+                    <div>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Descrição</p>
+                      <p className="text-sm text-slate-600 leading-relaxed">{etapaSelecionada.descricao}</p>
+                    </div>
+                  )}
+                  {etapaSelecionada.observacoes && (
+                    <div className="bg-yellow-50 p-4 rounded-2xl border border-yellow-100">
+                      <p className="text-[10px] font-bold text-yellow-600 uppercase mb-1">Observações</p>
+                      <p className="text-sm text-yellow-800 leading-relaxed">{etapaSelecionada.observacoes}</p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -831,6 +926,11 @@ export default function Fluxograma() {
     </div>
   );
 }
+
+
+
+
+
 
 // Função auxiliar para processar dados (Reutiliza lógica da Importação)
 const processData = (data, existingSteps = []) => {
@@ -997,11 +1097,12 @@ const processData = (data, existingSteps = []) => {
       dataPrevista: dataPrevista,
       dataReal: dataReal,
       ordem: ordem,
-      codigo: (codigo !== undefined && codigo !== null) ? codigo : '',
+      codigo: (codigo !== undefined && codigo !== null) ? String(codigo) : '',
       observacoes: getVal(['Observações', 'observacoes', 'Observação', 'observação', 'Observacao', 'observacao', 'Obs', 'obs', 'Comentários', 'comentarios']) || '',
       status: status,
       concluidoEm: concluidoEm,
-      quemConcluiu: quemConcluiu
+      quemConcluiu: quemConcluiu,
+      executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPor', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || ''
     });
   });
 

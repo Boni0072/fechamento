@@ -42,9 +42,19 @@ export default function Notificacoes() {
   useEffect(() => {
     if (!empresaAtual) return;
     const unsubscribe = getPeriodos(empresaAtual.id, (data) => {
-      setPeriodos(data);
-      if (data.length > 0 && !periodoSelecionado) {
-        setPeriodoSelecionado(data[0]);
+      // 1. Ordena primeiro para garantir determinismo
+      const sortedData = (data || []).sort((a, b) => {
+        if (b.ano !== a.ano) return b.ano - a.ano;
+        if (b.mes !== a.mes) return b.mes - a.mes;
+        return a.id.localeCompare(b.id);
+      });
+      // 2. Filtra duplicatas
+      const periodosUnicos = sortedData.filter((item, index, self) =>
+        index === self.findIndex(p => p.mes === item.mes && p.ano === item.ano)
+      );
+      setPeriodos(periodosUnicos);
+      if (periodosUnicos.length > 0 && !periodoSelecionado) {
+        setPeriodoSelecionado(periodosUnicos[0]);
       }
     });
     return () => unsubscribe();
@@ -97,7 +107,6 @@ export default function Notificacoes() {
     <div className="animate-fadeIn">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4">
-          <img src="/contabil.png" alt="Logo Contábil" className="w-36 h-36 object-contain" />
           <div>
             <h1 className="text-2xl font-bold text-slate-800">Notificações</h1>
             <p className="text-slate-500">Configure alertas automáticos para etapas do fechamento</p>

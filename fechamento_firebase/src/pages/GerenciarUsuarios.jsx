@@ -281,15 +281,31 @@ const GerenciarUsuarios = () => {
   };
 
   const handleExcluir = async (uid) => {
+    if (authUser && (uid === authUser.id || uid === authUser.uid)) {
+      alert('Você não pode excluir seu próprio usuário enquanto está logado.');
+      return;
+    }
+
     if (window.confirm('Tem certeza que deseja excluir este usuário?') && empresaAtual?.id) {
       try {
         const db = getFirestore();
+        
+        // Tenta remover do diretório global também (se existir)
+        try {
+          await deleteDoc(doc(db, 'users_directory', uid));
+        } catch (e) {
+          console.warn('Erro ao remover do diretório global:', e);
+        }
+
         const usuarioRef = doc(db, 'tenants', empresaAtual.id, 'usuarios', uid);
         await deleteDoc(usuarioRef);
+        
+        // Atualiza a lista visualmente de imediato
+        setUsuarios(prev => prev.filter(u => u.uid !== uid));
         setMensagem({ tipo: 'sucesso', texto: 'Usuário excluído com sucesso!' });
       } catch (error) {
         console.error("Erro ao excluir:", error);
-        setMensagem({ tipo: 'erro', texto: 'Erro ao excluir usuário.' });
+        setMensagem({ tipo: 'erro', texto: 'Erro ao excluir usuário: ' + error.message });
       }
     }
   };
@@ -317,7 +333,6 @@ const GerenciarUsuarios = () => {
     <div className="max-w-6xl mx-auto mt-8 p-6 bg-white rounded-lg shadow-md">
       <div className="flex justify-between items-center mb-6 border-b pb-4">
         <div className="flex items-center gap-4">
-          <img src="/contabil.png" alt="Logo Contábil" className="w-36 h-36 object-contain" />
           <h1 className="text-2xl font-bold text-gray-800">Gerenciar Usuários</h1>
         </div>
         <div className="flex items-center gap-6">

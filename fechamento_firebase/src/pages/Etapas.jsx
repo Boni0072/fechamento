@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getDatabase, ref, onValue, remove, set, push } from 'firebase/database';
-import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
+import { getFirestore, doc, onSnapshot, collection, getDocs, writeBatch, updateDoc, query, where, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { getPeriodos, getEtapas, getAreas, getResponsaveis, criarEtapa, atualizarEtapa, deletarEtapa, getStatusColor, getStatusLabel, importarEtapas } from '../services/database';
@@ -11,7 +10,7 @@ import { checkPermission } from "./permissionUtils";
 
 export default function Etapas() {
   const navigate = useNavigate();
-  const { empresaAtual } = useAuth();
+  const { empresaAtual, empresas, selecionarEmpresa } = useAuth();
   const { loading: loadingPermissoes, user: authUser } = usePermissao('etapas');
   const [userProfile, setUserProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
@@ -26,6 +25,7 @@ export default function Etapas() {
   const [filtros, setFiltros] = useState({ area: '', responsavel: '', status: '' });
   const [syncing, setSyncing] = useState(false);
   const [loadingData, setLoadingData] = useState(false);
+  const [viewAllCompanies, setViewAllCompanies] = useState(false);
 
   const [form, setForm] = useState({
     nome: '',
@@ -57,27 +57,81 @@ export default function Etapas() {
   const autorizado = true;
 
   useEffect(() => {
-    if (!empresaAtual) return;
+    if (!empresaAtual && !viewAllCompanies) return;
     
     // Busca dados atualizados da empresa no Firestore (para garantir que temos o spreadsheetId mais recente)
     const db = getFirestore();
-    const empresaRef = doc(db, 'tenants', empresaAtual.id);
-    const unsubEmpresa = onSnapshot(empresaRef, (snapshot) => {
-      const data = snapshot.data();
-      if (data) {
-        setEmpresaDados({ id: empresaAtual.id, ...data });
-      }
-    });
+    let unsubEmpresa = () => {};
+    let unsubPeriodos = () => {};
+    let unsubAreas = () => {};
+    let unsubResp = () => {};
 
-    const unsubPeriodos = getPeriodos(empresaAtual.id, (data) => {
-      setPeriodos(data);
-      if (data.length > 0 && !periodoSelecionado) {
-        setPeriodoSelecionado(data[0]);
-      }
-    });
-    
-    const unsubAreas = getAreas(empresaAtual.id, setAreas);
-    const unsubResp = getResponsaveis(empresaAtual.id, setResponsaveis);
+    if (viewAllCompanies) {
+      // Lógica para buscar períodos de TODAS as empresas e consolidar
+      const unsubscribes = [];
+      const allPeriodsMap = new Map();
+
+      empresas.forEach(emp => {
+        const unsub = getPeriodos(emp.id, (data) => {
+          data.forEach(p => {
+            const key = `${p.mes}-${p.ano}`;
+            if (!allPeriodsMap.has(key)) {
+              allPeriodsMap.set(key, { mes: p.mes, ano: p.ano, id: key });
+            }
+          });
+          
+          const sortedData = Array.from(allPeriodsMap.values()).sort((a, b) => {
+            if (b.ano !== a.ano) return b.ano - a.ano;
+            if (b.mes !== a.mes) return b.mes - a.mes;
+            return 0;
+          });
+          
+          setPeriodos(sortedData);
+          setPeriodoSelecionado(prev => {
+            if (!prev && sortedData.length > 0) return sortedData[0];
+            if (prev) {
+              const match = sortedData.find(p => p.mes === prev.mes && p.ano === prev.ano);
+              return match || sortedData[0] || null;
+            }
+            return null;
+          });
+        });
+        unsubscribes.push(unsub);
+      });
+      unsubPeriodos = () => unsubscribes.forEach(u => u());
+      
+      setEmpresaDados(null);
+      // Áreas e Responsáveis serão derivados das etapas carregadas
+      setAreas([]);
+      setResponsaveis([]);
+
+    } else if (empresaAtual) {
+      const empresaRef = doc(db, 'tenants', empresaAtual.id);
+      unsubEmpresa = onSnapshot(empresaRef, (snapshot) => {
+        const data = snapshot.data();
+        if (data) {
+          setEmpresaDados({ id: empresaAtual.id, ...data });
+        }
+      });
+
+      unsubPeriodos = getPeriodos(empresaAtual.id, (data) => {
+        const sortedData = (data || []).sort((a, b) => {
+          if (b.ano !== a.ano) return b.ano - a.ano;
+          if (b.mes !== a.mes) return b.mes - a.mes;
+          return a.id.localeCompare(b.id);
+        });
+        const periodosUnicos = sortedData.filter((item, index, self) =>
+          index === self.findIndex(p => p.mes === item.mes && p.ano === item.ano)
+        );
+        setPeriodos(periodosUnicos);
+        if (periodosUnicos.length > 0 && !periodoSelecionado) {
+          setPeriodoSelecionado(periodosUnicos[0]);
+        }
+      });
+      
+      unsubAreas = getAreas(empresaAtual.id, setAreas);
+      unsubResp = getResponsaveis(empresaAtual.id, setResponsaveis);
+    }
     
     return () => {
       unsubEmpresa();
@@ -85,28 +139,59 @@ export default function Etapas() {
       unsubAreas();
       unsubResp();
     };
-  }, [empresaAtual]);
+  }, [empresaAtual, viewAllCompanies, empresas]);
 
   useEffect(() => {
-    if (!empresaAtual || !periodoSelecionado) return;
+    if ((!empresaAtual && !viewAllCompanies) || !periodoSelecionado) return;
     
     setLoadingData(true);
-    const unsubscribe = getEtapas(empresaAtual.id, periodoSelecionado.id, (data) => {
-      // Filtra duplicatas por ID para evitar erro de chaves duplicadas no React
-      const uniqueData = data.filter((item, index, self) => 
-        index === self.findIndex((t) => t.id === item.id)
-      );
-      
-      // Filtra também duplicatas lógicas (mesmo nome/código) para garantir visualização limpa
-      const uniqueByContent = uniqueData.filter((item, index, self) => 
-        index === self.findIndex((t) => (t.codigo && t.codigo === item.codigo) || (!t.codigo && t.nome === item.nome))
-      );
+    let unsubscribe;
 
-      setEtapas(uniqueByContent);
-      setLoadingData(false);
-    });
-    return () => unsubscribe();
-  }, [empresaAtual, periodoSelecionado]);
+    if (viewAllCompanies) {
+      const unsubscribes = [];
+      const etapasMap = new Map();
+
+      empresas.forEach(emp => {
+        const unsubPeriodos = getPeriodos(emp.id, (periodsData) => {
+          const match = periodsData.find(p => p.mes === periodoSelecionado.mes && p.ano === periodoSelecionado.ano);
+          if (match) {
+            const unsubEtapas = getEtapas(emp.id, match.id, (etapasData) => {
+              etapasData.forEach(e => {
+                const uniqueId = `${emp.id}_${e.id}`;
+                etapasMap.set(uniqueId, { ...e, originalId: e.id, empresaId: emp.id, empresaNome: emp.nome });
+              });
+              const allEtapas = Array.from(etapasMap.values());
+              setEtapas(allEtapas);
+              
+              // Deriva áreas e responsáveis para os filtros
+              const uniqueAreas = [...new Set(allEtapas.map(e => e.area).filter(Boolean))].sort();
+              setAreas(uniqueAreas.map((a, i) => ({ id: i, nome: a })));
+              
+              const uniqueResps = [...new Set(allEtapas.map(e => e.responsavel).filter(Boolean))].sort();
+              setResponsaveis(uniqueResps.map((r, i) => ({ id: i, nome: r })));
+
+              setLoadingData(false);
+            });
+            unsubscribes.push(unsubEtapas);
+          }
+        });
+        unsubscribes.push(unsubPeriodos);
+      });
+      unsubscribe = () => unsubscribes.forEach(u => u());
+    } else {
+      unsubscribe = getEtapas(empresaAtual.id, periodoSelecionado.id, (data) => {
+        const uniqueData = data.filter((item, index, self) => 
+          index === self.findIndex((t) => t.id === item.id)
+        );
+        const uniqueByContent = uniqueData.filter((item, index, self) => 
+          index === self.findIndex((t) => (t.codigo && t.codigo === item.codigo) || (!t.codigo && t.nome === item.nome))
+        );
+        setEtapas(uniqueByContent);
+        setLoadingData(false);
+      });
+    }
+    return () => unsubscribe && unsubscribe();
+  }, [empresaAtual, periodoSelecionado, viewAllCompanies, empresas]);
 
   if (loadingPermissoes || loadingProfile) {
     return (
@@ -116,7 +201,7 @@ export default function Etapas() {
     );
   }
 
-  if (!empresaAtual) {
+  if (!empresaAtual && !viewAllCompanies) {
     return (
       <div className="flex flex-col items-center justify-center h-96">
         <p className="text-slate-500">Selecione uma empresa para gerenciar etapas</p>
@@ -191,76 +276,44 @@ export default function Etapas() {
     }
   };
 
-  const handleDeletarTodas = async () => {
-    if (etapas.length === 0) return;
-
-    if (window.confirm(`ATENÇÃO: Tem certeza que deseja excluir TODAS as ${etapas.length} etapas deste período? Esta ação é irreversível.`)) {
-      setSyncing(true);
-      
-      const pId = periodoSelecionado?.id;
-      if (!pId) {
-        alert("Erro: Período inválido ou não selecionado.");
-        setSyncing(false);
-        return;
-      }
-
-      try {
-        const db = getDatabase();
-        // Remove o nó "etapas" inteiro dentro do período selecionado
-        // Isso é muito mais rápido e garante que tudo seja apagado, mesmo itens com IDs problemáticos
-        const etapasRef = ref(db, `tenants/${empresaAtual.id}/periodos/${pId}/etapas`);
-        await remove(etapasRef);
-        setEtapas([]); // Limpa a lista visualmente de imediato para feedback instantâneo
-        alert("Todas as etapas foram excluídas com sucesso.");
-      } catch (error) {
-        console.error("Erro ao excluir todas as etapas:", error);
-        alert("Ocorreu um erro ao tentar excluir todas as etapas: " + error.message);
-      } finally {
-        setSyncing(false);
-      }
-    }
-  };
-
   const handleSync = async () => {
     const dados = empresaDados || empresaAtual;
     if (!dados?.spreadsheetId) {
-      if (window.confirm("Esta empresa não possui uma planilha configurada. Deseja ir para a tela de Empresas para configurar agora?")) {
+      if (window.confirm("Esta empresa não possui uma planilha configurada para sincronização.\n\nOs dados exibidos estão salvos no banco de dados do sistema.\n\nDeseja configurar uma planilha agora para permitir atualizações?")) {
         navigate('/empresas');
       }
       return;
     }
     
-    if (!periodoSelecionado) {
-      alert("Selecione um período para sincronizar.");
-      return;
-    }
-    
     setSyncing(true);
     try {
-      const url = `https://docs.google.com/spreadsheets/d/${dados.spreadsheetId}/gviz/tq?tqx=out:csv&gid=0&t=${Date.now()}`;
+      const sheetParam = dados.sheetName ? `&sheet=${encodeURIComponent(dados.sheetName)}` : '&gid=0';
+      const url = `https://docs.google.com/spreadsheets/d/${dados.spreadsheetId}/gviz/tq?tqx=out:csv${sheetParam}&t=${Date.now()}`;
       const response = await fetch(url, { cache: 'no-store' });
       if (!response.ok) throw new Error('Erro ao conectar com a planilha.');
       
       const csvText = await response.text();
-      if (csvText.trim().toLowerCase().startsWith('<!doctype html') || csvText.includes('<html')) {
-        throw new Error('Planilha privada ou link inválido.');
-      }
-
       const workbook = XLSX.read(csvText, { type: 'string' });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const data = XLSX.utils.sheet_to_json(sheet, { raw: true });
 
+      // Busca dados atuais do banco (Firestore) para comparação precisa
+      const db = getFirestore();
+      const etapasRef = collection(db, 'tenants', empresaAtual.id, 'periodos', periodoSelecionado.id, 'etapas');
+      const snapshot = await getDocs(etapasRef);
+      const currentDocs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+
       // Processamento inicial (tentando manter histórico)
-      let processedSteps = processData(data, etapas);
+      let processedSteps = processData(data, currentDocs);
 
       if (processedSteps.length > 0) {
         let keepHistory = true;
 
         // Pergunta sobre o histórico (Status/Datas)
-        if (etapas.length > 0) {
+        if (currentDocs.length > 0) {
           keepHistory = window.confirm(
             `Encontrados ${processedSteps.length} registros na planilha.\n` +
-            `Existem ${etapas.length} registros no sistema.\n\n` +
+            `Existem ${currentDocs.length} registros no sistema.\n\n` +
             `[OK] = MANTER histórico (Status, Datas, Responsáveis) e atualizar dados.\n` +
             `[Cancelar] = LIMPAR TUDO (Resetar status para 'Pendente' e apagar histórico).`
           );
@@ -277,37 +330,46 @@ export default function Etapas() {
 
         // Confirmação final de substituição
         if (processedSteps.length > 0) {
-          const db = getDatabase();
-          const etapasRef = ref(db, `tenants/${empresaAtual.id}/periodos/${periodoSelecionado.id}/etapas`);
-
-          try {
-            // 1. Limpa visualmente e no banco (Reset Total)
-            setEtapas([]); 
-
-            // 2. Prepara os novos dados (Preservando IDs para evitar duplicação)
-            const updates = {};
+            // Prepara lista de operações (Batch)
+            const operations = [];
+            const keptIds = new Set();
             
             processedSteps.forEach(step => {
-              // Se já tem ID (veio do processData/match), usa ele. Se não, cria um novo.
-              const key = step.id || push(etapasRef).key;
+              const docRef = step.id ? doc(etapasRef, step.id) : doc(etapasRef);
               const { id, ...dados } = step;
               
-              updates[key] = {
+              const stepData = {
                 ...dados,
-                createdAt: new Date().toISOString(),
-                createdBy: userProfile?.uid || userProfile?.id || 'importacao',
-                createdByName: userProfile?.nome || userProfile?.name || 'Importação'
+                createdAt: dados.createdAt || new Date().toISOString(),
+                createdBy: dados.createdBy || userProfile?.uid || userProfile?.id || 'importacao',
+                createdByName: dados.createdByName || userProfile?.nome || userProfile?.name || 'Importação'
               };
+
+              operations.push({ type: 'set', ref: docRef, data: stepData });
+              if (step.id) keptIds.add(step.id);
             });
             
-            // 3. Gravação Atômica (Substitui tudo)
-            await set(etapasRef, updates);
+            // Remove itens do banco que NÃO estão mais na planilha
+            const docsToDelete = currentDocs.filter(d => !keptIds.has(d.id));
+            docsToDelete.forEach(d => {
+              operations.push({ type: 'delete', ref: doc(etapasRef, d.id) });
+            });
+
+            // Executa em lotes de 400
+            const BATCH_SIZE = 400;
+            let opsCount = 0;
+            for (let i = 0; i < operations.length; i += BATCH_SIZE) {
+              const batch = writeBatch(db);
+              const chunk = operations.slice(i, i + BATCH_SIZE);
+              chunk.forEach(op => {
+                  if (op.type === 'set') batch.set(op.ref, op.data, { merge: true });
+                  else if (op.type === 'delete') batch.delete(op.ref);
+              });
+              await batch.commit();
+              opsCount += chunk.length;
+            }
             
-            alert(`Sincronização concluída com sucesso!\nTotal de etapas: ${processedSteps.length}`);
-          } catch (err) {
-            console.error(err);
-            alert("Erro ao gravar no banco de dados: " + err.message);
-          }
+            alert(`Sincronização concluída com sucesso!\n\nOperações realizadas: ${opsCount}\n- Atualizados/Criados: ${processedSteps.length}\n- Excluídos: ${docsToDelete.length}`);
         }
       } else {
         alert('Nenhuma etapa encontrada na planilha.');
@@ -331,7 +393,6 @@ export default function Etapas() {
     <div className="animate-fadeIn">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4">
-          <img src="/contabil.png" alt="Logo Contábil" className="w-36 h-36 object-contain" />
           <div>
             <h1 className="text-2xl font-bold text-slate-800">Etapas do Fechamento</h1>
             <p className="text-slate-500">Gerencie as etapas do fechamento contábil</p>
@@ -354,12 +415,12 @@ export default function Etapas() {
           
           <button
             onClick={handleSync}
-            disabled={syncing || loadingData}
+            disabled={syncing || loadingData || viewAllCompanies}
             className={`flex items-center gap-2 px-4 py-2 border rounded-lg transition-colors ${
-              !(empresaDados || empresaAtual)?.spreadsheetId 
+              !(empresaDados || empresaAtual)?.spreadsheetId || viewAllCompanies
                 ? 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200' 
                 : 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
-            } ${syncing || loadingData ? 'opacity-50 cursor-wait' : ''}`}
+            } ${syncing || loadingData ? 'opacity-50 cursor-wait' : ''} ${viewAllCompanies ? 'cursor-not-allowed opacity-50' : ''}`}
             title={!(empresaDados || empresaAtual)?.spreadsheetId ? "Clique para saber como configurar" : "Atualizar dados da planilha Google"}
           >
             <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
@@ -372,16 +433,6 @@ export default function Etapas() {
             title="Configurações da Empresa"
           >
             <Settings className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={handleDeletarTodas}
-            disabled={etapas.length === 0 || syncing}
-            className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded-lg hover:bg-red-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            title="Excluir todas as etapas deste período"
-          >
-            <Trash2 className="w-4 h-4" />
-            <span className="hidden sm:inline">Excluir Todas</span>
           </button>
 
           <button
@@ -399,7 +450,8 @@ export default function Etapas() {
               });
               setShowModal(true);
             }}
-            className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
+            disabled={viewAllCompanies}
+            className={`flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 ${viewAllCompanies ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             <Plus className="w-4 h-4" />
             Nova Etapa
@@ -461,6 +513,7 @@ export default function Etapas() {
               <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Etapa</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Área</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Responsável</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Executado Por</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Data Prevista</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Hora Prevista</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Data Real</th>
@@ -472,7 +525,7 @@ export default function Etapas() {
           <tbody className="divide-y divide-slate-100">
             {etapasFiltradas.length === 0 ? (
               <tr>
-                <td colSpan={11} className="px-4 py-8 text-center text-slate-500">
+                <td colSpan={12} className="px-4 py-8 text-center text-slate-500">
                   Nenhuma etapa encontrada
                 </td>
               </tr>
@@ -486,6 +539,7 @@ export default function Etapas() {
                   <td className="px-4 py-3 text-sm text-slate-800">{etapa.nome}</td>
                   <td className="px-4 py-3 text-sm text-slate-600">{etapa.area || '-'}</td>
                   <td className="px-4 py-3 text-sm text-slate-600">{etapa.responsavel || '-'}</td>
+                  <td className="px-4 py-3 text-sm text-slate-600">{etapa.executadoPor || '-'}</td>
                   <td className="px-4 py-3 text-sm text-slate-600">
                     {etapa.dataPrevista ? new Date(etapa.dataPrevista).toLocaleDateString('pt-BR') : '-'}
                   </td>
@@ -507,13 +561,15 @@ export default function Etapas() {
                     <div className="flex gap-2">
                       <button
                         onClick={() => handleEditar(etapa)}
-                        className="p-1 text-slate-400 hover:text-primary-600"
+                        disabled={viewAllCompanies}
+                        className={`p-1 text-slate-400 hover:text-primary-600 ${viewAllCompanies ? 'opacity-30 cursor-not-allowed' : ''}`}
                       >
                         <Edit2 className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => handleDeletar(etapa.id)}
-                        className="p-1 text-slate-400 hover:text-red-600"
+                        disabled={viewAllCompanies}
+                        className={`p-1 text-slate-400 hover:text-red-600 ${viewAllCompanies ? 'opacity-30 cursor-not-allowed' : ''}`}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -653,6 +709,10 @@ export default function Etapas() {
       )}
     </div>
   );
+
+
+
+
 }
 
 // Função auxiliar para processar dados (Reutiliza lógica da Importação)
@@ -855,11 +915,12 @@ const processData = (data, existingSteps = []) => {
       dataPrevista: dataPrevista,
       dataReal: dataReal,
       ordem: ordem,
-      codigo: (codigo !== undefined && codigo !== null) ? codigo : '',
+      codigo: (codigo !== undefined && codigo !== null) ? String(codigo) : '',
       observacoes: getVal(['Observações', 'observacoes']) || '',
       status: status,
       concluidoEm: concluidoEm,
-      quemConcluiu: quemConcluiu
+      quemConcluiu: quemConcluiu,
+      executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPor', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || ''
     });
   });
 

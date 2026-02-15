@@ -46,8 +46,8 @@ const MenuItem = ({ item, collapsed }) => {
         className={({ isActive }) =>
           `flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
             isActive
-              ? 'bg-primary-600 text-white'
-              : 'text-slate-300 hover:bg-slate-700'
+              ? 'bg-orange-600 text-white'
+              : 'text-slate-300 hover:bg-gray-400 hover:text-white'
           } ${collapsed ? 'justify-center' : ''}`
         }
         title={collapsed ? item.label : ''}
@@ -82,61 +82,91 @@ export default function Sidebar() {
   const nomeExibicao = dbUser?.nome || user?.displayName || user?.email || 'Usuário';
   const avatarUrl = dbUser?.avatar || user?.photoURL;
 
+  const handleSelecao = (empresa) => {
+    // Ao passar null, o AuthContext limpa a empresa atual, 
+    // o que ativa o modo 'viewAllCompanies' no Dashboard.
+    selecionarEmpresa(empresa);
+    setShowEmpresas(false);
+  };
+
   return (
-    <aside className={`${collapsed ? 'w-20' : 'w-64'} bg-slate-800 text-white min-h-screen flex flex-col transition-all duration-300`}>
+    <aside className={`${collapsed ? 'w-20' : 'w-64'} bg-gray-900 text-white min-h-screen flex flex-col transition-all duration-300`}>
       {/* Logo & Toggle */}
-      <div className={`p-4 border-b border-slate-700 flex items-center ${collapsed ? 'justify-center' : 'justify-between'}`}>
-        {!collapsed && <h1 className="text-lg font-bold text-primary-400 truncate">Fechamento Contabíl</h1>}
+      <div className="p-4 border-b border-gray-800 flex flex-col items-center relative">
+        <img src="/hunterDouglas.png" alt="Logo Contábil" className="w-36 h-36 object-contain" />
+        
+        {!collapsed && <h1 className="text-lg font-bold text-white truncate mt-2">Fechamento Contábil</h1>}
         <button 
           onClick={() => setCollapsed(!collapsed)}
-          className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 transition-colors"
+          className="absolute top-2 right-2 p-1.5 rounded-lg hover:bg-gray-800 text-slate-400 transition-colors"
         >
           {collapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
         </button>
       </div>
 
       {/* Seletor de Empresa */}
-      {empresaAtual && (
-        <div className="p-4 border-b border-slate-700">
-          {collapsed ? (
-            <div className="flex justify-center" title={empresaAtual.nome}>
-              <button 
-                onClick={() => setCollapsed(false)}
-                className="w-10 h-10 bg-slate-700 rounded-lg flex items-center justify-center hover:bg-slate-600 transition-colors"
-              >
-                <Building2 className="w-5 h-5 text-slate-300" />
-              </button>
-            </div>
-          ) : (
+      <div className="p-4 border-b border-gray-800">
+        {collapsed ? (
+          <div className="flex justify-center">
+            <button 
+              onClick={() => setCollapsed(false)}
+              className="w-10 h-10 bg-gray-800 rounded-lg flex items-center justify-center hover:bg-gray-700 transition-colors"
+              title={empresaAtual ? empresaAtual.nome : 'Consolidado'}
+            >
+              <Building2 className={`w-5 h-5 ${!empresaAtual ? 'text-orange-500' : 'text-white'}`} />
+            </button>
+          </div>
+        ) : (
+          <div className="relative">
+            <label className="text-xs text-slate-500 mb-1 block px-1">Visualização:</label>
             <button
               onClick={() => setShowEmpresas(!showEmpresas)}
-              className="w-full flex items-center justify-between text-sm bg-slate-700 rounded-lg p-2 hover:bg-slate-600 transition-colors"
+              className={`w-full flex items-center justify-between text-sm rounded-lg p-2 transition-colors border ${
+                !empresaAtual 
+                  ? 'bg-orange-600/10 border-orange-600/50 text-orange-500' 
+                  : 'bg-gray-800 border-gray-700 text-white hover:bg-gray-700'
+              }`}
             >
-              <span className="truncate">{empresaAtual.nome}</span>
+              <div className="flex items-center gap-2 truncate">
+                <Building2 className="w-4 h-4 flex-shrink-0" />
+                <span className="truncate font-medium">
+                  {empresaAtual ? empresaAtual.nome : '📊 Consolidado (Geral)'}
+                </span>
+              </div>
               <ChevronDown className={`w-4 h-4 transition-transform ${showEmpresas ? 'rotate-180' : ''}`} />
             </button>
-          )}
-          
-          {!collapsed && showEmpresas && empresas.length > 1 && (
-            <div className="mt-2 bg-slate-700 rounded-lg overflow-hidden">
-              {empresas.map(empresa => (
+
+            {showEmpresas && (
+              <div className="absolute z-50 mt-1 w-full bg-gray-800 rounded-lg shadow-xl border border-gray-700 overflow-hidden max-h-60 overflow-y-auto">
                 <button
-                  key={empresa.id}
-                  onClick={() => {
-                    selecionarEmpresa(empresa);
-                    setShowEmpresas(false);
-                  }}
-                  className={`w-full text-left p-2 text-sm hover:bg-slate-600 transition-colors ${
-                    empresa.id === empresaAtual.id ? 'bg-slate-600' : ''
-                  }`}
+                  onClick={() => handleSelecao(null)}
+                  className={`w-full text-left p-2.5 text-sm hover:bg-gray-700 transition-colors flex items-center gap-2 ${!empresaAtual ? 'bg-orange-600 text-white' : 'text-slate-300'}`}
                 >
-                  {empresa.nome}
+                  <LayoutDashboard className="w-4 h-4" />
+                  <span>Consolidado (Todas)</span>
                 </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+                
+                <div className="border-t border-gray-700 my-1"></div>
+
+                {empresas && empresas.length > 0 ? (
+                  empresas.map(empresa => (
+                    <button
+                      key={empresa?.id}
+                      onClick={() => handleSelecao(empresa)}
+                      className={`w-full text-left p-2.5 text-sm hover:bg-gray-700 transition-colors flex items-center gap-2 ${empresaAtual && empresa.id === empresaAtual.id ? 'bg-orange-600 text-white' : 'text-slate-300'}`}
+                    >
+                      <Building2 className="w-4 h-4" />
+                      <span className="truncate">{empresa.nome}</span>
+                    </button>
+                  ))
+                ) : (
+                  <div className="p-2 text-xs text-slate-500 text-center italic">Nenhuma empresa encontrada</div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Menu */}
       <nav className="flex-1 p-4 overflow-y-auto overflow-x-hidden">
@@ -148,7 +178,7 @@ export default function Sidebar() {
       </nav>
 
       {/* Usuário */}
-      <div className="p-4 border-t border-slate-700">
+      <div className="p-4 border-t border-gray-800">
         {collapsed ? (
           <div className="flex flex-col items-center gap-4">
             <div title={nomeExibicao}>
@@ -160,7 +190,7 @@ export default function Sidebar() {
                   onError={() => setImgError(true)}
                 />
               ) : (
-                <div className="w-8 h-8 rounded-full bg-primary-600 flex items-center justify-center text-white font-bold text-xs">
+                <div className="w-8 h-8 rounded-full bg-orange-600 flex items-center justify-center text-white font-bold text-xs">
                   {nomeExibicao.charAt(0).toUpperCase()}
                 </div>
               )}
@@ -168,7 +198,7 @@ export default function Sidebar() {
             <button
               onClick={logout}
               title="Sair"
-              className="p-2 text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
+              className="p-2 text-slate-300 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
             >
               <LogOut className="w-5 h-5" />
             </button>
@@ -184,17 +214,17 @@ export default function Sidebar() {
                   onError={() => setImgError(true)}
                 />
               ) : (
-                <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center text-white font-bold">
+                <div className="w-10 h-10 rounded-full bg-orange-600 flex items-center justify-center text-white font-bold">
                   {nomeExibicao.charAt(0).toUpperCase()}
                 </div>
               )}
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">{nomeExibicao}</p>
+                <p className="text-sm font-medium truncate text-white">{nomeExibicao}</p>
               </div>
             </div>
             <button
               onClick={logout}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
             >
               <LogOut className="w-4 h-4" />
               Sair

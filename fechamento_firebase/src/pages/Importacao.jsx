@@ -8,7 +8,7 @@ import * as XLSX from 'xlsx';
 import { checkPermission } from './permissionUtils';
 
 export default function Importacao() {
-  const { empresaAtual } = useAuth();
+  const { empresaAtual, empresas, selecionarEmpresa } = useAuth();
   const { loading: loadingPermissoes, user: authUser } = usePermissao('importacao');
   const [userProfile, setUserProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
@@ -53,9 +53,20 @@ export default function Importacao() {
     });
 
     const unsubscribe = getPeriodos(empresaAtual.id, (data) => {
-      setPeriodos(data);
-      if (data.length > 0 && !periodoSelecionado) {
-        setPeriodoSelecionado(data[0].id);
+      // 1. Ordena primeiro para garantir determinismo
+      const sortedData = (data || []).sort((a, b) => {
+        if (b.ano !== a.ano) return b.ano - a.ano;
+        if (b.mes !== a.mes) return b.mes - a.mes;
+        return a.id.localeCompare(b.id);
+      });
+      // 2. Filtra duplicatas
+      const periodosUnicos = sortedData.filter((item, index, self) =>
+        index === self.findIndex(p => p.mes === item.mes && p.ano === item.ano)
+      );
+
+      setPeriodos(periodosUnicos);
+      if (periodosUnicos.length > 0 && !periodoSelecionado) {
+        setPeriodoSelecionado(periodosUnicos[0].id);
       }
     });
     return () => {
@@ -101,7 +112,8 @@ export default function Importacao() {
 
     try {
       let jsonData = [];
-      const url = `https://docs.google.com/spreadsheets/d/${dados.spreadsheetId}/gviz/tq?tqx=out:csv&gid=0&t=${Date.now()}`;
+      const sheetParam = dados.sheetName ? `&sheet=${encodeURIComponent(dados.sheetName)}` : '&gid=0';
+      const url = `https://docs.google.com/spreadsheets/d/${dados.spreadsheetId}/gviz/tq?tqx=out:csv${sheetParam}&t=${Date.now()}`;
       
       try {
         const response = await fetch(url, { cache: 'no-store' });
@@ -169,7 +181,6 @@ export default function Importacao() {
     <div className="animate-fadeIn">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4">
-          <img src="/contabil.png" alt="Logo Contábil" className="w-36 h-36 object-contain" />
           <div>
             <h1 className="text-2xl font-bold text-slate-800">Importação de Dados</h1>
             <p className="text-slate-500">Importe etapas via Google Planilhas</p>
@@ -177,6 +188,19 @@ export default function Importacao() {
         </div>
         
         <div className="flex gap-3">
+          <select
+            value={empresaAtual?.id || ''}
+            onChange={(e) => {
+              const novaEmpresa = empresas.find(emp => emp.id === e.target.value);
+              if (novaEmpresa) selecionarEmpresa(novaEmpresa);
+            }}
+            className="px-4 py-2 border border-slate-200 rounded-lg"
+          >
+            {empresas && empresas.map(emp => (
+              <option key={emp.id} value={emp.id}>{emp.nome}</option>
+            ))}
+          </select>
+
           <select
             value={periodoSelecionado}
             onChange={(e) => setPeriodoSelecionado(e.target.value)}
@@ -283,6 +307,7 @@ export default function Importacao() {
                     <th className="px-4 py-2 font-medium">Nome</th>
                     <th className="px-4 py-2 font-medium">Área</th>
                     <th className="px-4 py-2 font-medium">Responsável</th>
+                    <th className="px-4 py-2 font-medium">Executado Por</th>
                     <th className="px-4 py-2 font-medium">Data Prevista</th>
                     <th className="px-4 py-2 font-medium">Hora Prevista</th>
                     <th className="px-4 py-2 font-medium">Data Real</th>
@@ -300,6 +325,7 @@ export default function Importacao() {
                       <td className="px-4 py-2 text-slate-800 font-medium">{row.nome}</td>
                       <td className="px-4 py-2 text-slate-600">{row.area}</td>
                       <td className="px-4 py-2 text-slate-600">{row.responsavel}</td>
+                      <td className="px-4 py-2 text-slate-600">{row.executadoPor}</td>
                       <td className="px-4 py-2 text-slate-600">
                         {row.dataPrevista ? new Date(row.dataPrevista).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '-'}
                       </td>
@@ -483,11 +509,12 @@ const processData = (data) => {
       dataPrevista: dataPrevista,
       dataReal: dataReal,
       ordem: ordem,
-      codigo: (codigo !== undefined && codigo !== null) ? codigo : '',
+      codigo: (codigo !== undefined && codigo !== null) ? String(codigo) : '',
       observacoes: getVal(['Observações', 'observacoes', 'Observação', 'observação', 'Observacao', 'observacao', 'Obs', 'obs', 'Comentários', 'comentarios']) || '',
       status: status,
       concluidoEm: concluidoEm,
-      quemConcluiu: quemConcluiu
+      quemConcluiu: quemConcluiu,
+      executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPor', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || ''
     });
   });
 

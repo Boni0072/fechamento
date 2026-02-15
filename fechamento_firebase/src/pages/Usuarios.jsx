@@ -251,17 +251,33 @@ export default function Usuarios() {
   };
 
   const handleExcluir = async (uid) => {
+    if (authUser && (uid === authUser.id || uid === authUser.uid)) {
+      alert('Você não pode excluir seu próprio usuário enquanto está logado. Peça a outro administrador para realizar esta ação ou saia e entre com outra conta.');
+      return;
+    }
+
     if (window.confirm('Tem certeza que deseja excluir este usuário?') && empresaAtual?.id) {
       try {
         const db = getFirestore();
+        
+        // 1. Tenta remover do diretório global (Login) - Melhor esforço
+        // Envolvemos em try/catch isolado para que falhas aqui não impeçam a exclusão na empresa
+        try {
+          await deleteDoc(doc(db, 'users_directory', uid));
+        } catch (dirError) {
+          console.warn("Aviso: Não foi possível remover do diretório global:", dirError);
+        }
+
+        // 2. Remove do cadastro da empresa (Tenant) - Obrigatório
         await deleteDoc(doc(db, 'tenants', empresaAtual.id, 'usuarios', uid));
-        // Opcional: Remover do users_directory também se desejar bloquear login totalmente
-        await deleteDoc(doc(db, 'users_directory', uid));
+        
+        // Atualiza a lista visualmente de imediato
+        setUsuarios(prev => prev.filter(u => u.uid !== uid));
         setMensagem({ tipo: 'sucesso', texto: 'Usuário excluído com sucesso!' });
         setTimeout(() => setMensagem({ tipo: '', texto: '' }), 3000);
       } catch (error) {
         console.error("Erro ao excluir:", error);
-        setMensagem({ tipo: 'erro', texto: 'Erro ao excluir usuário.' });
+        setMensagem({ tipo: 'erro', texto: 'Erro ao excluir usuário: ' + error.message });
       }
     }
   };
@@ -302,7 +318,6 @@ export default function Usuarios() {
     <div className="animate-fadeIn">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4">
-          <img src="/contabil.png" alt="Logo Contábil" className="w-36 h-36 object-contain" />
           <div>
             <h1 className="text-2xl font-bold text-slate-800">Usuários</h1>
             <p className="text-slate-500">Gerencie o acesso à sua empresa</p>

@@ -30,12 +30,13 @@ export default function Historico() {
       setLoadingProfile(false);
     }
   }, [authUser, empresaAtual]);
-
+  
   // Restrição removida
   const autorizado = true;
 
   useEffect(() => {
     if (!empresaAtual) return;
+    console.log("empresaAtual.id:", empresaAtual.id);
     const unsubscribe = getHistorico(empresaAtual.id, setHistorico);
     return () => unsubscribe();
   }, [empresaAtual]);
@@ -67,7 +68,6 @@ export default function Historico() {
   return (
     <div className="animate-fadeIn">
       <div className="flex items-center gap-4 mb-6">
-        <img src="/contabil.png" alt="Logo Contábil" className="w-36 h-36 object-contain" />
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Histórico de Alterações</h1>
           <p className="text-slate-500">Auditoria de todas as modificações nas etapas</p>
