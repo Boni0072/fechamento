@@ -1,19 +1,28 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { getPeriodos, getEtapas, calcularIndicadores, getStatusLabel } from '../services/database';
-import { FileText, Download, BarChart3, Users, AlertTriangle } from 'lucide-react';
+import { FileText, Download, BarChart3, Users, AlertTriangle, Building2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { checkPermission } from './permissionUtils';
 
 export default function Relatorios() {
-  const { empresaAtual } = useAuth();
+  const { empresaAtual, empresas } = useAuth();
   const { loading: loadingPermissoes, user: authUser } = usePermissao('relatorios');
+
+  const empresasParaBuscar = useMemo(() => {
+    if (empresaAtual) return [empresaAtual];
+    return empresas || [];
+  }, [empresaAtual, empresas]);
+  const viewAllCompanies = !empresaAtual;
+
   const [userProfile, setUserProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [periodos, setPeriodos] = useState([]);
   const [periodoSelecionado, setPeriodoSelecionado] = useState(null);
+  const [allPeriodsMap, setAllPeriodsMap] = useState({});
+  const [stepsByCompany, setStepsByCompany] = useState({});
   const [etapas, setEtapas] = useState([]);
   const [indicadores, setIndicadores] = useState(null);
   const [tab, setTab] = useState('resumo');
@@ -37,34 +46,98 @@ export default function Relatorios() {
   const autorizado = true;
 
   useEffect(() => {
-    if (!empresaAtual) return;
-    const unsubscribe = getPeriodos(empresaAtual.id, (data) => {
-      // 1. Ordena primeiro para garantir determinismo
-      const sortedData = (data || []).sort((a, b) => {
-        if (b.ano !== a.ano) return b.ano - a.ano;
-        if (b.mes !== a.mes) return b.mes - a.mes;
-        return a.id.localeCompare(b.id);
+    if (!empresasParaBuscar || empresasParaBuscar.length === 0) {
+      setPeriodos([]);
+      setPeriodoSelecionado(null);
+      setAllPeriodsMap({});
+      return;
+    }
+
+    setAllPeriodsMap({});
+    const unsubs = [];
+    empresasParaBuscar.forEach(emp => {
+      const unsubscribe = getPeriodos(emp.id, (data) => {
+        setAllPeriodsMap(prev => ({ ...prev, [emp.id]: data || [] }));
       });
-      // 2. Filtra duplicatas
-      const periodosUnicos = sortedData.filter((item, index, self) =>
-        index === self.findIndex(p => p.mes === item.mes && p.ano === item.ano)
-      );
-      setPeriodos(periodosUnicos);
-      if (periodosUnicos.length > 0 && !periodoSelecionado) {
-        setPeriodoSelecionado(periodosUnicos[0]);
-      }
+      unsubs.push(unsubscribe);
     });
-    return () => unsubscribe();
-  }, [empresaAtual]);
+
+    return () => unsubs.forEach(u => u());
+  }, [empresasParaBuscar]);
 
   useEffect(() => {
-    if (!empresaAtual || !periodoSelecionado) return;
-    const unsubscribe = getEtapas(empresaAtual.id, periodoSelecionado.id, (data) => {
-      setEtapas(data);
-      setIndicadores(calcularIndicadores(data));
+    const allPeriods = Object.values(allPeriodsMap).flat();
+    const uniqueMap = new Map();
+    
+    allPeriods.forEach(p => {
+      const key = `${p.ano}-${p.mes}`;
+      if (!uniqueMap.has(key)) {
+        uniqueMap.set(key, { 
+          id: key, 
+          mes: p.mes, 
+          ano: p.ano 
+        });
+      }
     });
-    return () => unsubscribe();
-  }, [empresaAtual, periodoSelecionado]);
+
+    const sorted = Array.from(uniqueMap.values()).sort((a, b) => {
+      if (b.ano !== a.ano) return b.ano - a.ano;
+      return b.mes - a.mes;
+    });
+
+    setPeriodos(sorted);
+    
+    if (!periodoSelecionado && sorted.length > 0) {
+      setPeriodoSelecionado(sorted[0]);
+    } else if (periodoSelecionado) {
+        const exists = sorted.find(p => p.id === periodoSelecionado.id);
+        if (!exists && sorted.length > 0) setPeriodoSelecionado(sorted[0]);
+    }
+  }, [allPeriodsMap]);
+
+  useEffect(() => {
+    if (!periodoSelecionado || !empresasParaBuscar || empresasParaBuscar.length === 0) {
+      setEtapas([]);
+      setStepsByCompany({});
+      return;
+    }
+
+    setStepsByCompany({});
+    const unsubs = [];
+    
+    empresasParaBuscar.forEach(emp => {
+      const empPeriods = allPeriodsMap[emp.id] || [];
+      const match = empPeriods.find(p => p.mes === periodoSelecionado.mes && p.ano === periodoSelecionado.ano);
+      
+      if (match) {
+        const unsubscribe = getEtapas(emp.id, match.id, (data) => {
+          setStepsByCompany(prev => ({
+            ...prev,
+            [emp.id]: data.map(d => ({ 
+                ...d, 
+                empresaId: emp.id, 
+                empresaNome: emp.nome
+            }))
+          }));
+        });
+        unsubs.push(unsubscribe);
+      } else {
+         setStepsByCompany(prev => {
+             const next = { ...prev };
+             delete next[emp.id];
+             return next;
+         });
+      }
+    });
+
+    return () => unsubs.forEach(u => u());
+  }, [periodoSelecionado, empresasParaBuscar, allPeriodsMap]);
+
+  useEffect(() => {
+    const allSteps = Object.values(stepsByCompany).flat();
+    setEtapas(allSteps);
+    setIndicadores(calcularIndicadores(allSteps));
+  }, [stepsByCompany]);
 
   if (loadingPermissoes || loadingProfile) {
     return (
@@ -74,10 +147,10 @@ export default function Relatorios() {
     );
   }
 
-  if (!empresaAtual) {
+  if (!empresas || empresas.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-96">
-        <p className="text-slate-500">Selecione uma empresa para ver relatórios</p>
+        <p className="text-slate-500">Nenhuma empresa disponível</p>
       </div>
     );
   }
@@ -91,24 +164,36 @@ export default function Relatorios() {
   }
 
   const exportarCSV = () => {
-    const headers = ['D+', 'Etapa', 'Área', 'Responsável', 'Data Prevista', 'Data Real', 'Status'];
-    const rows = etapas.map(e => [
-      e.ordem,
-      e.nome,
-      e.area || '',
-      e.responsavel || '',
-      e.dataPrevista || '',
-      e.dataReal || '',
-      getStatusLabel(e.status)
-    ]);
+    const headers = ['D+', 'Etapa', 'Área', 'Responsável', 'Data Prevista', 'Data Real', 'Status', 'Observações'];
+    if (viewAllCompanies) {
+      headers.splice(2, 0, 'Empresa');
+    }
+
+    const rows = etapas.map(e => {
+      const rowData = [
+        e.ordem,
+        e.nome,
+        e.area || '',
+        e.responsavel || '',
+        e.dataPrevista ? format(new Date(e.dataPrevista), 'dd/MM/yyyy HH:mm') : '',
+        e.dataReal ? format(new Date(e.dataReal), 'dd/MM/yyyy HH:mm') : '',
+        getStatusLabel(e.status),
+        e.observacoes || ''
+      ];
+      if (viewAllCompanies) {
+        rowData.splice(2, 0, e.empresaNome || '');
+      }
+      return rowData;
+    });
     
-    const csv = [headers, ...rows].map(row => row.join(';')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const csv = [headers, ...rows].map(row => row.map(cell => `"${String(cell || '').replace(/"/g, '""')}"`).join(';')).join('\n');
+    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
     link.download = `relatorio_fechamento_${periodoSelecionado?.mes}_${periodoSelecionado?.ano}.csv`;
     link.click();
+    URL.revokeObjectURL(url);
   };
 
   const etapasAtrasadas = etapas.filter(e => e.status === 'atrasado' || e.status === 'concluido_atraso');
@@ -123,6 +208,14 @@ export default function Relatorios() {
     if (!acc[resp]) acc[resp] = { total: 0, atrasadas: 0 };
     acc[resp].total++;
     if (e.status === 'atrasado' || e.status === 'concluido_atraso') acc[resp].atrasadas++;
+    return acc;
+  }, {});
+  const etapasPorEmpresa = etapas.reduce((acc, e) => {
+    const emp = e.empresaNome || 'Sem empresa';
+    if (!acc[emp]) acc[emp] = { total: 0, atrasadas: 0, concluidas: 0 };
+    acc[emp].total++;
+    if (e.status === 'atrasado' || e.status === 'concluido_atraso') acc[emp].atrasadas++;
+    if (e.status === 'concluido' || e.status === 'concluido_atraso') acc[emp].concluidas++;
     return acc;
   }, {});
 
@@ -166,6 +259,7 @@ export default function Relatorios() {
         <TabButton active={tab === 'atrasadas'} onClick={() => setTab('atrasadas')} icon={<AlertTriangle className="w-4 h-4" />} label="Atrasadas" />
         <TabButton active={tab === 'areas'} onClick={() => setTab('areas')} icon={<BarChart3 className="w-4 h-4" />} label="Por Área" />
         <TabButton active={tab === 'responsaveis'} onClick={() => setTab('responsaveis')} icon={<Users className="w-4 h-4" />} label="Responsáveis" />
+        {viewAllCompanies && <TabButton active={tab === 'empresas'} onClick={() => setTab('empresas')} icon={<Building2 className="w-4 h-4" />} label="Por Empresa" />}
       </div>
 
       {/* Conteúdo */}
@@ -235,6 +329,30 @@ export default function Relatorios() {
                   <div className="flex items-center justify-between mb-2">
                     <span className="font-medium text-slate-800">{area}</span>
                     <span className="text-sm text-slate-500">{concluidas}/{etapasArea.length} ({percentual}%)</span>
+                  </div>
+                  <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                    <div className="h-full bg-primary-500" style={{ width: `${percentual}%` }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {tab === 'empresas' && viewAllCompanies && (
+        <div className="bg-white rounded-xl shadow-sm p-6">
+          <h2 className="text-lg font-semibold text-slate-800 mb-4">Relatório por Empresa</h2>
+          
+          <div className="space-y-4">
+            {Object.entries(etapasPorEmpresa).map(([empresa, dados]) => {
+              const percentual = dados.total > 0 ? Math.round((dados.concluidas / dados.total) * 100) : 0;
+              
+              return (
+                <div key={empresa} className="p-4 bg-slate-50 rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-medium text-slate-800">{empresa}</span>
+                    <span className="text-sm text-slate-500">{dados.concluidas}/{dados.total} ({percentual}%)</span>
                   </div>
                   <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
                     <div className="h-full bg-primary-500" style={{ width: `${percentual}%` }} />

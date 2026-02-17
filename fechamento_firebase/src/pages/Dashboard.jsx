@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate} from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { getFirestore, doc, onSnapshot, collection, getDocs, writeBatch, deleteDoc } from 'firebase/firestore';
@@ -7,6 +7,7 @@ import { getPeriodos, getEtapas } from '../services/database';
 import { Clock, AlertTriangle, Activity, Target, X, Info, RefreshCw, ChevronDown, ChevronUp, Trophy } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
+import { getDatabase, ref, onValue } from "firebase/database";
 export default function Dashboard() {
   const navigate = useNavigate();
   const { empresaAtual, empresas, selecionarEmpresa } = useAuth();
@@ -44,6 +45,9 @@ export default function Dashboard() {
   const [selectedStatus, setSelectedStatus] = useState(null);
   const [empresaDados, setEmpresaDados] = useState(null);
   const [syncing, setSyncing] = useState(false);
+  const isSyncingRef = useRef(false);
+  const [nextSync, setNextSync] = useState(15);
+  const [autoSyncing, setAutoSyncing] = useState(false);
   const [showResponsavel, setShowResponsavel] = useState(false);
   const [showApoio, setShowApoio] = useState(false); 
   const [kpis, setKpis] = useState({
@@ -161,21 +165,48 @@ export default function Dashboard() {
     }
     return () => unsubscribe && unsubscribe();
   }, [empresaAtual, periodoSelecionado, viewAllCompanies, empresas]);
-  const handleSync = async () => {
+
+  useEffect(() => {
+    if (!empresaAtual) return;
+
+    const db = getDatabase();
+    const googleTableRef = ref(db, `tenants/${empresaAtual.id}/tabelaGoogle`);
+
+    const unsubscribe = onValue(googleTableRef, (snapshot) => {
+      let data = snapshot.val()
+      if (data) {
+        // Process the data from Realtime Database and update state
+        console.log("Data from Realtime Database:", data);
+      }
+
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [empresaAtual]);
+
+  const handleSync = useCallback(async (isAuto = false) => {
+    if (isSyncingRef.current) return;
+
     const dados = empresaDados || empresaAtual;
     if (!dados?.spreadsheetId) {
-      if (window.confirm("Esta empresa não possui uma planilha configurada para sincronização.\n\nOs dados exibidos estão salvos no banco de dados do sistema.\n\nDeseja configurar uma planilha agora para permitir atualizações?")) {
-        navigate('/empresas');
+      if (!isAuto) {
+        if (window.confirm("Esta empresa não possui uma planilha configurada para sincronização.\n\nOs dados exibidos estão salvos no banco de dados do sistema.\n\nDeseja configurar uma planilha agora para permitir atualizações?")) {
+          navigate('/empresas');
+        }
       }
       return;
     }
     
     if (!periodoSelecionado) {
-      alert("Selecione um período para sincronizar.");
+      if (!isAuto) alert("Selecione um período para sincronizar.");
       return;
     }
     
-    setSyncing(true);
+    isSyncingRef.current = true;
+    if (!isAuto) setSyncing(true); else setAutoSyncing(true);
+
     try {
       const sheetParam = dados.sheetName ? `&sheet=${encodeURIComponent(dados.sheetName)}` : '&gid=0';
       const url = `https://docs.google.com/spreadsheets/d/${dados.spreadsheetId}/gviz/tq?tqx=out:csv${sheetParam}&t=${Date.now()}`;
@@ -204,7 +235,7 @@ export default function Dashboard() {
         let keepHistory = true;
 
         // Pergunta sobre o histórico (Status/Datas)
-        if (currentDocs.length > 0) {
+        if (!isAuto && currentDocs.length > 0) {
           keepHistory = window.confirm(
             `Encontrados ${processedSteps.length} registros na planilha.\n` +
             `Existem ${currentDocs.length} registros no sistema.\n\n` +
@@ -215,8 +246,9 @@ export default function Dashboard() {
 
         // Se escolheu LIMPAR (Cancelar), reprocessa ignorando os dados atuais
         if (!keepHistory) {
-          if (!window.confirm("⚠️ TEM CERTEZA?\n\nIsso apagará todos os status 'Concluído' e datas reais.\nO sistema ficará idêntico à planilha original.")) {
-            setSyncing(false);
+          if (!isAuto && !window.confirm("⚠️ TEM CERTEZA?\n\nIsso apagará todos os status 'Concluído' e datas reais.\nO sistema ficará idêntico à planilha original.")) {
+            if (!isAuto) setSyncing(false);
+            isSyncingRef.current = false;
             return;
           }
           processedSteps = processData(data, []); // Passa array vazio para ignorar histórico
@@ -257,17 +289,37 @@ export default function Dashboard() {
           await batch.commit();
         }
 
-        alert(`Sincronização concluída com sucesso!\n\nItens atualizados: ${processedSteps.length}\nItens removidos: ${docsToDelete.length}`);
+        if (!isAuto) alert(`Sincronização concluída com sucesso!\n\nItens atualizados: ${processedSteps.length}\nItens removidos: ${docsToDelete.length}`);
       } else {
-        alert('Nenhuma etapa encontrada na planilha.');
+        if (!isAuto) alert('Nenhuma etapa encontrada na planilha.');
       }
     } catch (error) {
       console.error(error);
-      alert('Erro na sincronização: ' + error.message);
+      if (!isAuto) alert('Erro na sincronização: ' + error.message);
     } finally {
-      setSyncing(false);
+      if (!isAuto) setSyncing(false); else setAutoSyncing(false);
+      isSyncingRef.current = false;
     }
-  };
+  }, [empresaAtual, empresaDados, periodoSelecionado, navigate]);
+
+  // Sincronização Automática (Polling)
+  useEffect(() => {
+    let interval;
+    if (empresaDados?.spreadsheetId && periodoSelecionado && !syncing && !viewAllCompanies) {
+      interval = setInterval(() => {
+        if (!isSyncingRef.current && !syncing) {
+          setNextSync(prev => {
+            if (prev <= 1) {
+              handleSync(true);
+              return 15;
+            }
+            return prev - 1;
+          });
+        }
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [empresaDados, periodoSelecionado, syncing, viewAllCompanies, handleSync]);
 
   const calcularKpis = (dados) => {
     const total = dados.length;
@@ -489,20 +541,6 @@ export default function Dashboard() {
         </div>
         
         <div className="flex items-center gap-3">
-          <button
-            onClick={handleSync}
-            disabled={syncing || viewAllCompanies}
-            className={`flex items-center gap-2 px-4 py-2 border rounded-lg transition-colors ${
-              !(empresaDados || empresaAtual)?.spreadsheetId || viewAllCompanies
-                ? 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200' 
-                : 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
-            } ${syncing ? 'opacity-50 cursor-wait' : ''} ${viewAllCompanies ? 'cursor-not-allowed opacity-50' : ''}`}
-            title={!(empresaDados || empresaAtual)?.spreadsheetId ? "Clique para saber como configurar" : "Atualizar dados da planilha Google"}
-          >
-            <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">{syncing ? 'Sincronizando...' : 'Sincronizar'}</span>
-          </button>
-
           <select
             value={periodoSelecionado?.id || ''}
             onChange={(e) => {
@@ -861,184 +899,6 @@ export default function Dashboard() {
     </div>
   );
 }
-
-// Função auxiliar para processar dados (Reutiliza lógica da Importação)
-function processData(data, existingSteps = []) {
-  if (!Array.isArray(data)) return [];
-  const etapasValidadas = [];
-  const chavesProcessadas = new Set();
-  const usedIds = new Set(); // Rastreia IDs já vinculados para permitir códigos duplicados em tarefas diferentes
-
-  const formatarData = (valor) => {
-    if (valor === null || valor === undefined || String(valor).trim() === '') return null;
-
-    // 1. Número (Serial Excel)
-    if (typeof valor === 'number') {
-      const valorAjustado = Math.floor(valor + 0.001);
-      const date = new Date((valorAjustado - 25569) * 86400 * 1000 + 43200000);
-      return date.toISOString();
-    }
-    
-    if (typeof valor === 'string') {
-      const v = valor.trim();
-      const dmy = v.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
-      if (dmy) {
-        const dia = parseInt(dmy[1], 10);
-        const mes = parseInt(dmy[2], 10);
-        let ano = parseInt(dmy[3], 10);
-        if (ano < 100) ano += 2000;
-        if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) {
-             const date = new Date(Date.UTC(ano, mes - 1, dia, 12, 0, 0));
-             if (!isNaN(date.getTime())) return date.toISOString();
-        }
-      }
-      const ymd = v.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/);
-      if (ymd) {
-         const ano = parseInt(ymd[1], 10);
-         const mes = parseInt(ymd[2], 10);
-         const dia = parseInt(ymd[3], 10);
-         const date = new Date(Date.UTC(ano, mes - 1, dia, 12, 0, 0));
-         if (!isNaN(date.getTime())) return date.toISOString();
-      }
-    }
-    return null;
-  };
-
-  const combinarDataHora = (dataISO, horaVal) => {
-    if (!dataISO) return null;
-    if (horaVal === undefined || horaVal === null || String(horaVal).trim() === '') return dataISO;
-    
-    const dt = new Date(dataISO);
-    const year = dt.getUTCFullYear();
-    const month = dt.getUTCMonth();
-    const day = dt.getUTCDate();
-
-    let hours = 0;
-    let minutes = 0;
-
-    if (typeof horaVal === 'number') {
-      const totalSeconds = Math.round(horaVal * 86400);
-      hours = Math.floor(totalSeconds / 3600) % 24;
-      minutes = Math.floor((totalSeconds % 3600) / 60);
-    } else if (typeof horaVal === 'string') {
-      const parts = horaVal.trim().split(':');
-      if (parts.length >= 2) {
-        hours = parseInt(parts[0], 10) || 0;
-        minutes = parseInt(parts[1], 10) || 0;
-      }
-    }
-    
-    const localDate = new Date(year, month, day, hours, minutes, 0, 0);
-    return localDate.toISOString();
-  };
-
-  data.forEach((row, index) => {
-    const getVal = (keys) => {
-      const normalize = (k) => k ? String(k).toLowerCase().replace(/\s+/g, ' ').trim() : '';
-      for (const k of keys) {
-        let val = row[k];
-        if (val === undefined) {
-          const target = normalize(k);
-          const foundKey = Object.keys(row).find(rk => normalize(rk) === target);
-          if (foundKey) val = row[foundKey];
-        }
-        if (val !== undefined && val !== null && String(val).trim() !== '') {
-          return val;
-        }
-      }
-      return undefined;
-    };
-
-    const nome = getVal(['TAREFA', 'tarefa', 'Nome', 'nome', 'Etapa', 'etapa', 'Etapas', 'etapas', 'Tarefas', 'tarefas', 'Atividade', 'atividade', 'Descrição', 'descricao', 'Item', 'item']);
-    const codigo = getVal(['CODIGO', 'codigo', 'CÓDIGO', 'código', 'Codigo', 'Código', 'Cod', 'COD', 'ID', 'Id', 'Code']);
-    
-    if (!nome) return;
-
-    const normalizeVal = (str) => str ? String(str).trim().replace(/\s+/g, ' ').toLowerCase() : '';
-    const uniqueKey = `${codigo ? 'code:' + normalizeVal(codigo) : ''}|name:${normalizeVal(nome)}`;
-    
-    if (chavesProcessadas.has(uniqueKey)) return;
-    chavesProcessadas.add(uniqueKey);
-
-    const existing = existingSteps.find(e => {
-      if (usedIds.has(e.id)) return false;
-      const normalize = (str) => str ? String(str).trim().replace(/\s+/g, ' ').toLowerCase() : '';
-      const codeA = normalize(codigo);
-      const codeB = normalize(e.codigo);
-      const nameA = normalize(nome);
-      const nameB = normalize(e.nome);
-      if (codeA && codeB && codeA === codeB && nameA === nameB) return true;
-      if (codeA && codeB && codeA === codeB) return true;
-      if (nameA === nameB) {
-        if (codeA && codeB && codeA !== codeB) return false;
-        return true;
-      }
-      return false;
-    });
-
-    if (existing) usedIds.add(existing.id);
-
-    let rawOrdem = getVal(['D+', 'd+', 'Ordem', 'ordem', 'Dia', 'dia']);
-    let ordem = parseInt(rawOrdem);
-    if (isNaN(ordem) && typeof rawOrdem === 'string') {
-       const match = rawOrdem.match(/\d+/);
-       if (match) ordem = parseInt(match[0]);
-    }
-    if (isNaN(ordem)) ordem = index + 1;
-
-    let dataPrevista = formatarData(getVal(['INÍCIO', 'início', 'inicio', 'Data Prevista', 'dataPrevista', 'Data de Início', 'Data de Inicio', 'Previsão', 'Previsao', 'Data', 'Date', 'Start', 'Planejado', 'Data Planejada']));
-    const horaInicio = getVal(['HORA INICIO', 'Hora Inicio', 'hora inicio', 'Hora Início']);
-    dataPrevista = combinarDataHora(dataPrevista, horaInicio);
-    
-    let rawDataReal = getVal(['TÉRMINO', 'término', 'termino', 'Data Real', 'dataReal', 'Data Conclusão', 'Data Conclusao', 'Conclusão', 'Conclusao', 'Realizado', 'Executado', 'Fim', 'Data de Término', 'Data de Termino', 'Data Fim', 'Data Final', 'End']);
-
-    let dataReal = formatarData(rawDataReal);
-    const horaTermino = getVal(['HORA TÉRMINO', 'Hora Término', 'hora término', 'HORA TERMICA', 'Hora Termica']);
-    dataReal = combinarDataHora(dataReal, horaTermino);
-    
-    let rawStatus = getVal(['STATUS', 'Status', 'status', 'SITUAÇÃO', 'Situação', 'situacao', 'Estado', 'estado']);
-    let status = existing?.status || 'pendente';
-    
-    if (rawStatus) {
-       const s = String(rawStatus).toLowerCase();
-       if (s.includes('conclu')) status = 'concluido';
-       else if (s.includes('atras')) status = 'atrasado';
-       else if (s.includes('pendente')) status = 'pendente';
-       else if (s.includes('andamento')) status = 'em_andamento';
-    } else if (status === 'pendente' && rawDataReal !== undefined && rawDataReal !== null && String(rawDataReal).trim() !== '') {
-      status = 'concluido';
-    }
-
-    let concluidoEm = existing?.concluidoEm || null;
-    let quemConcluiu = existing?.quemConcluiu || null;
-
-    if (status === 'concluido') {
-      if (!quemConcluiu) quemConcluiu = 'Importação Automática';
-      if (!dataReal) dataReal = dataPrevista || new Date().toISOString();
-      concluidoEm = dataReal;
-    }
-
-    etapasValidadas.push({
-      id: existing ? existing.id : null,
-      nome: nome,
-      descricao: getVal(['Descrição', 'descricao']) || '',
-      area: getVal(['ÁREA', 'área', 'area', 'Área']) || '',
-      responsavel: getVal(['ATRIBUÍDO PARA', 'atribuído para', 'atribuido para', 'Responsável', 'responsavel', 'Responsavel', 'Owner']) || '',
-      dataPrevista: dataPrevista,
-      dataReal: dataReal,
-      ordem: ordem,
-      codigo: (codigo !== undefined && codigo !== null) ? String(codigo) : '',
-      observacoes: getVal(['Observações', 'observacoes']) || '',
-      status: status,
-      concluidoEm: concluidoEm,
-      quemConcluiu: quemConcluiu,
-      executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPor', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || ''
-    });
-  });
-
-  return etapasValidadas;
-}
-
 function Card({ title, value, subtitle, icon, color }) {
   const colors = {
     blue: 'bg-blue-50 text-blue-600',

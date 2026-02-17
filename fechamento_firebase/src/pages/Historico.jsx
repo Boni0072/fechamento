@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
@@ -9,12 +9,17 @@ import { ptBR } from 'date-fns/locale';
 import { checkPermission } from './permissionUtils';
 
 export default function Historico() {
-  const { empresaAtual } = useAuth();
+  const { empresaAtual, empresas } = useAuth();
   const { loading: loadingPermissoes, user: authUser } = usePermissao('historico');
   const [userProfile, setUserProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [historico, setHistorico] = useState([]);
   const [tab, setTab] = useState('timeline');
+
+  const empresasParaBuscar = useMemo(() => {
+    if (empresaAtual) return [empresaAtual];
+    return empresas || [];
+  }, [empresaAtual, empresas]);
 
   useEffect(() => {
     if (authUser?.id && empresaAtual?.id) {
@@ -35,11 +40,28 @@ export default function Historico() {
   const autorizado = true;
 
   useEffect(() => {
-    if (!empresaAtual) return;
-    console.log("empresaAtual.id:", empresaAtual.id);
-    const unsubscribe = getHistorico(empresaAtual.id, setHistorico);
-    return () => unsubscribe();
-  }, [empresaAtual]);
+    if (!empresasParaBuscar || empresasParaBuscar.length === 0) {
+        setHistorico([]);
+        return;
+    };
+
+    const unsubscribes = [];
+    const historicoMap = new Map();
+
+    empresasParaBuscar.forEach(emp => {
+      const unsub = getHistorico(emp.id, (data) => {
+        data.forEach(item => historicoMap.set(item.id, item));
+        
+        const allHistorico = Array.from(historicoMap.values()).sort((a, b) => 
+          new Date(b.timestamp) - new Date(a.timestamp)
+        );
+        setHistorico(allHistorico);
+      });
+      unsubscribes.push(unsub);
+    });
+
+    return () => unsubscribes.forEach(u => u());
+  }, [empresasParaBuscar]);
 
   if (loadingPermissoes || loadingProfile) {
     return (
@@ -49,10 +71,10 @@ export default function Historico() {
     );
   }
 
-  if (!empresaAtual) {
+  if (!empresas || empresas.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-96">
-        <p className="text-slate-500">Selecione uma empresa para ver o histórico</p>
+        <p className="text-slate-500">Nenhuma empresa disponível</p>
       </div>
     );
   }
