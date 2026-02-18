@@ -124,46 +124,6 @@ export default function Etapas() {
   }, [empresasParaBuscar, empresaAtual]);
 
   useEffect(() => {
-    if (!periodoSelecionado || !empresasParaBuscar || empresasParaBuscar.length === 0) {
-      setEtapas([]);
-      return;
-    }
-    
-    setLoadingData(true);
-    const unsubscribes = [];
-    const etapasMap = new Map();
-
-    empresasParaBuscar.forEach(emp => {
-        const unsubPeriodos = getPeriodos(emp.id, (periodsData) => {
-          const match = periodsData.find(p => p.mes === periodoSelecionado.mes && p.ano === periodoSelecionado.ano);
-          if (match) {
-            const unsubEtapas = getEtapas(emp.id, match.id, (etapasData) => {
-              etapasData.forEach(e => {
-                const uniqueId = `${emp.id}_${e.id}`;
-                etapasMap.set(uniqueId, { ...e, originalId: e.id, empresaId: emp.id, empresaNome: emp.nome, periodoId: match.id });
-              });
-              const allEtapas = Array.from(etapasMap.values());
-              setEtapas(allEtapas);
-              
-              // Deriva áreas e responsáveis para os filtros
-              const uniqueAreas = [...new Set(allEtapas.map(e => e.area).filter(Boolean))].sort();
-              setAreas(uniqueAreas.map((a, i) => ({ id: i, nome: a })));
-              
-              const uniqueResps = [...new Set(allEtapas.map(e => e.responsavel).filter(Boolean))].sort();
-              setResponsaveis(uniqueResps.map((r, i) => ({ id: i, nome: r })));
-
-              setLoadingData(false);
-            });
-            unsubscribes.push(unsubEtapas);
-          }
-        });
-        unsubscribes.push(unsubPeriodos);
-    });
-    
-    return () => unsubscribes.forEach(u => u());
-  }, [periodoSelecionado, empresasParaBuscar]);
-
-  useEffect(() => {
     if (!empresaAtual) return;
 
    const db = getDatabase();
@@ -172,9 +132,22 @@ export default function Etapas() {
     const unsubscribe = onValue(googleTableRef, (snapshot) => {
      let data = snapshot.val();
       if (data) {
-       // Process the data from Realtime Database and update state
+        setLoadingData(true);
+        // Process the data from Realtime Database and update state
         console.log("Data from Realtime Database:", data);
-        setEtapas(processRealtimeData(data));
+        const allEtapas = processRealtimeData(data);
+        setEtapas(allEtapas);
+
+        // Deriva áreas e responsáveis para os filtros a partir dos dados processados
+        const uniqueAreas = [...new Set(allEtapas.map(e => e.area).filter(Boolean))].sort();
+        setAreas(uniqueAreas.map((a, i) => ({ id: i, nome: a })));
+        
+        const uniqueResps = [...new Set(allEtapas.map(e => e.responsavel).filter(Boolean))].sort();
+        setResponsaveis(uniqueResps.map((r, i) => ({ id: i, nome: r })));
+        setLoadingData(false);
+      } else {
+        setEtapas([]);
+        setLoadingData(false);
       }
      });
 
@@ -317,30 +290,13 @@ export default function Etapas() {
 
   const processRealtimeData = (data) => {
     //Transformar os dados do Realtime Database em um formato que o componente possa usar
-    //Adaptar a estrutura de dados do Realtime Database para coincidir com o que as etapas esperam
-     if (!data) return [];
+    //Adaptar a estrutura de dados do Realtime Database para coincidir com o que as etapas esperam.
+    if (!data) return [];
 
-    const etapasArray = Object.keys(data).map(key => {
-      const etapa = data[key];
-      return {
-        id: key,
-
-     dataReal: etapa.dataReal || '',
-
-        nome: etapa.nome,
-        descricao: etapa.descricao || '',
-        area: etapa.area || '',
-        responsavel: etapa.responsavel || '',
-        dataPrevista: etapa.dataPrevista || '',
-        dataReal: etapa.dataReal || '',
-        ordem: etapa.ordem || 1,
-        observacoes: etapa.observacoes || '',
-        status: etapa.status || 'pendente'
-      };
-    });
-
-
-    return etapasArray;
+    // Reutiliza a função de processamento de dados já existente no arquivo.
+    // O segundo argumento é para mesclar com dados existentes, mas aqui vamos tratar
+    // o Realtime Database como a fonte da verdade.
+    return processData(data, []);
   };
 
 
@@ -770,31 +726,46 @@ function processData(data, existingSteps = []) {
     if (typeof valor === 'string') {
       const v = valor.trim();
       
-      // 2. Formato DD/MM/AAAA (Estrito BR)
-      const dmy = v.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/);
+      // 2. Formato DD/MM/AAAA HH:mm (Estrito BR)
+      const dmy = v.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?/);
       if (dmy) {
         const dia = parseInt(dmy[1], 10);
         const mes = parseInt(dmy[2], 10);
         let ano = parseInt(dmy[3], 10);
+        const hora = dmy[4] ? parseInt(dmy[4], 10) : null;
+        const min = dmy[5] ? parseInt(dmy[5], 10) : null;
         
         if (ano < 100) ano += 2000;
 
         if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) {
-             // Cria a data em UTC ao meio-dia para evitar problemas de fuso horário.
-             const date = new Date(Date.UTC(ano, mes - 1, dia, 12, 0, 0));
-             if (!isNaN(date.getTime())) return date.toISOString();
+             if (hora !== null) {
+               // Se tiver hora, usa o horário local para preservar o "relógio"
+               const date = new Date(ano, mes - 1, dia, hora, min || 0, 0);
+               if (!isNaN(date.getTime())) return date.toISOString();
+             } else {
+               // Se for só data, usa UTC meio-dia para evitar problemas de fuso
+               const date = new Date(Date.UTC(ano, mes - 1, dia, 12, 0, 0));
+               if (!isNaN(date.getTime())) return date.toISOString();
+             }
         }
       }
 
-      // 3. Formato ISO YYYY-MM-DD (ou similar)
-      const ymd = v.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
+      // 3. Formato ISO YYYY-MM-DD HH:mm (ou similar)
+      const ymd = v.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})(?:[T\s](\d{1,2}):(\d{2}))?/);
       if (ymd) {
          const ano = parseInt(ymd[1], 10);
          const mes = parseInt(ymd[2], 10);
          const dia = parseInt(ymd[3], 10);
-         // Cria a data em UTC ao meio-dia para evitar problemas de fuso horário.
-         const date = new Date(Date.UTC(ano, mes - 1, dia, 12, 0, 0));
-         if (!isNaN(date.getTime())) return date.toISOString();
+         const hora = ymd[4] ? parseInt(ymd[4], 10) : null;
+         const min = ymd[5] ? parseInt(ymd[5], 10) : null;
+
+         if (hora !== null) {
+            const date = new Date(ano, mes - 1, dia, hora, min || 0, 0);
+            if (!isNaN(date.getTime())) return date.toISOString();
+         } else {
+            const date = new Date(Date.UTC(ano, mes - 1, dia, 12, 0, 0));
+            if (!isNaN(date.getTime())) return date.toISOString();
+         }
       }
     }
     return null;
@@ -819,10 +790,21 @@ function processData(data, existingSteps = []) {
       hours = Math.floor(totalSeconds / 3600) % 24;
       minutes = Math.floor((totalSeconds % 3600) / 60);
     } else if (typeof horaVal === 'string') {
-      const parts = horaVal.trim().split(':');
-      if (parts.length >= 2) {
-        hours = parseInt(parts[0], 10) || 0;
-        minutes = parseInt(parts[1], 10) || 0;
+      const v = horaVal.trim();
+      // Verifica se é uma data ISO ou formato com data (ex: 1899-12-30T18:12:00)
+      if (v.includes('T') || v.includes('-') || v.includes('/')) {
+        const timeDate = new Date(v);
+        if (!isNaN(timeDate.getTime())) {
+          // Se tiver 'Z', usa UTC, senão usa local
+          hours = v.toUpperCase().includes('Z') ? timeDate.getUTCHours() : timeDate.getHours();
+          minutes = v.toUpperCase().includes('Z') ? timeDate.getUTCMinutes() : timeDate.getMinutes();
+        }
+      } else {
+        const parts = v.split(':');
+        if (parts.length >= 2) {
+          hours = parseInt(parts[0], 10) || 0;
+          minutes = parseInt(parts[1], 10) || 0;
+        }
       }
     }
     
@@ -911,19 +893,36 @@ function processData(data, existingSteps = []) {
     const horaTermino = getVal(['HORA TÉRMINO', 'Hora Término', 'hora término', 'HORA TERMICA', 'Hora Termica']);
     dataReal = combinarDataHora(dataReal, horaTermino);
     
-    // Busca status explícito na planilha (Coluna STATUS)
+    // Lógica de Status Corrigida
+    let status = 'pendente';
+    const now = new Date();
+
     let rawStatus = getVal(['STATUS', 'Status', 'status', 'SITUAÇÃO', 'Situação', 'situacao', 'Estado', 'estado']);
-    let status = existing?.status || 'pendente';
     
     if (rawStatus) {
        const s = String(rawStatus).toLowerCase();
-       if (s.includes('conclu')) status = 'concluido';
+       if (s.includes('conclu')) {
+           status = 'concluido';
+           if (dataReal && dataPrevista && new Date(dataReal) > new Date(dataPrevista)) {
+               status = 'concluido_atraso';
+           }
+       }
        else if (s.includes('atras')) status = 'atrasado';
-       else if (s.includes('pendente')) status = 'pendente';
        else if (s.includes('andamento')) status = 'em_andamento';
-    } else if (status === 'pendente' && rawDataReal !== undefined && rawDataReal !== null && String(rawDataReal).trim() !== '') {
-      // Auto-concluir APENAS se não houver status explícito dizendo o contrário
-      status = 'concluido';
+       else status = 'pendente';
+    } else {
+       if (dataReal) {
+           status = 'concluido';
+           if (dataPrevista && new Date(dataReal) > new Date(dataPrevista)) {
+               status = 'concluido_atraso';
+           }
+       } else {
+           if (dataPrevista && new Date(dataPrevista) < now) {
+               status = 'atrasado';
+           } else {
+               status = 'pendente';
+           }
+       }
     }
 
     let concluidoEm = existing?.concluidoEm || null;

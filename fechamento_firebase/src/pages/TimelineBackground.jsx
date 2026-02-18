@@ -74,7 +74,7 @@ const TimelineBackground = forwardRef(({
     return () => {
       hasCenteredRef.current = false;
     };
-  }, [dias, horaInicio, alturaSlot]);
+  }, [dias, horaInicio, alturaSlot, dataInicio.getTime()]);
 
   return (
     <div ref={containerRef} className="h-full overflow-auto bg-white border border-slate-200 rounded-lg relative custom-scrollbar">

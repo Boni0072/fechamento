@@ -131,43 +131,19 @@ export default function Dashboard() {
   }, [empresaAtual, viewAllCompanies, empresas]);
 
   useEffect(() => {
-    if ((!empresaAtual && !viewAllCompanies) || !periodoSelecionado) return;
-    let unsubscribe;
+    // Se estiver em modo "Todas as Empresas", não há uma fonte única de dados em tempo real.
+    // Limpa os dados para evitar exibir dados de uma empresa anterior.
     if (viewAllCompanies) {
-      const unsubscribes = [];
-      const etapasMap = new Map();
-      empresas.forEach(emp => {
-        const unsubPeriodos = getPeriodos(emp.id, (periodsData) => {
-          const match = periodsData.find(p => p.mes === periodoSelecionado.mes && p.ano === periodoSelecionado.ano);
-          if (match) {
-            const unsubEtapas = getEtapas(emp.id, match.id, (etapasData) => {
-              etapasData.forEach(e => {
-                const uniqueId = `${emp.id}_${e.id}`;
-                etapasMap.set(uniqueId, { ...e, originalId: e.id, empresaId: emp.id, empresaNome: emp.nome });
-              });
-              const allEtapas = Array.from(etapasMap.values());
-              setEtapas(allEtapas);
-              calcularKpis(allEtapas);
-            });
-            unsubscribes.push(unsubEtapas);
-          }
-        });
-        unsubscribes.push(unsubPeriodos);
-      });
-      unsubscribe = () => unsubscribes.forEach(u => u());
-    } else {
-      unsubscribe = getEtapas(empresaAtual.id, periodoSelecionado.id, (data) => {
-        const uniqueById = (data || []).filter((item, index, self) => index === self.findIndex((t) => t.id === item.id));
-        const uniqueByContent = (uniqueById || []).filter((item, index, self) => index === self.findIndex((t) => (t.codigo && t.codigo === item.codigo) || (!t.codigo && t.nome === item.nome)));
-        setEtapas(uniqueByContent);
-        calcularKpis(uniqueByContent);
-      });
+      setEtapas([]);
+      calcularKpis([]);
+      return;
     }
-    return () => unsubscribe && unsubscribe();
-  }, [empresaAtual, periodoSelecionado, viewAllCompanies, empresas]);
 
-  useEffect(() => {
-    if (!empresaAtual) return;
+    if (!empresaAtual) {
+      setEtapas([]);
+      calcularKpis([]);
+      return;
+    }
 
     const db = getDatabase();
     const googleTableRef = ref(db, `tenants/${empresaAtual.id}/tabelaGoogle`);
@@ -177,6 +153,12 @@ export default function Dashboard() {
       if (data) {
         // Process the data from Realtime Database and update state
         console.log("Data from Realtime Database:", data);
+        const processedEtapas = processRealtimeData(data);
+        setEtapas(processedEtapas);
+        calcularKpis(processedEtapas);
+      } else {
+        setEtapas([]);
+        calcularKpis([]);
       }
 
     });
@@ -184,7 +166,7 @@ export default function Dashboard() {
     return () => {
       unsubscribe();
     };
-  }, [empresaAtual]);
+  }, [empresaAtual, viewAllCompanies]);
 
   const handleSync = useCallback(async (isAuto = false) => {
     if (isSyncingRef.current) return;
@@ -491,6 +473,13 @@ export default function Dashboard() {
       desempenhoPorEmpresa,
       rankingApoio
     });
+  };
+
+  const processRealtimeData = (data) => {
+    if (!data) return [];
+    // Converte o objeto do Firebase em um array que a função processData espera.
+    const dataArray = Array.isArray(data) ? data : Object.values(data);
+    return processData(dataArray, []);
   };
   
   // Dados para o Gráfico de Rosca
@@ -898,6 +887,215 @@ export default function Dashboard() {
       )}
     </div>
   );
+}
+
+// Função auxiliar para processar dados (Reutiliza lógica da Importação/Etapas)
+function processData(data, existingSteps = []) {
+  if (!Array.isArray(data)) return [];
+  const etapasValidadas = [];
+  const chavesProcessadas = new Set();
+  const usedIds = new Set(); // Rastreia IDs já vinculados para permitir códigos duplicados em tarefas diferentes
+
+  const formatarData = (valor) => {
+    if (valor === null || valor === undefined || String(valor).trim() === '') return null;
+
+    // 1. Número (Serial Excel)
+    if (typeof valor === 'number') {
+      const valorAjustado = Math.floor(valor + 0.001);
+      const date = new Date((valorAjustado - 25569) * 86400 * 1000 + 43200000);
+      return date.toISOString();
+    }
+    
+    if (typeof valor === 'string') {
+      const v = valor.trim();
+      
+      // 2. Formato DD/MM/AAAA HH:mm (Estrito BR)
+      const dmy = v.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})(?:[\sT]+(\d{1,2}):(\d{2}))?/);
+      if (dmy) {
+        const dia = parseInt(dmy[1], 10);
+        const mes = parseInt(dmy[2], 10);
+        let ano = parseInt(dmy[3], 10);
+        const hora = dmy[4] ? parseInt(dmy[4], 10) : null;
+        const min = dmy[5] ? parseInt(dmy[5], 10) : null;
+        
+        if (ano < 100) ano += 2000;
+
+        if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) {
+             if (hora !== null) {
+               const date = new Date(ano, mes - 1, dia, hora, min || 0, 0);
+               if (!isNaN(date.getTime())) return date.toISOString();
+             } else {
+               const date = new Date(Date.UTC(ano, mes - 1, dia, 12, 0, 0));
+               if (!isNaN(date.getTime())) return date.toISOString();
+             }
+        }
+      }
+
+      // 3. Formato ISO YYYY-MM-DD HH:mm
+      const ymd = v.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})(?:[\sT]+(\d{1,2}):(\d{2}))?/);
+      if (ymd) {
+         const ano = parseInt(ymd[1], 10);
+         const mes = parseInt(ymd[2], 10);
+         const dia = parseInt(ymd[3], 10);
+         const hora = ymd[4] ? parseInt(ymd[4], 10) : null;
+         const min = ymd[5] ? parseInt(ymd[5], 10) : null;
+
+         if (hora !== null) {
+            const date = new Date(ano, mes - 1, dia, hora, min || 0, 0);
+            if (!isNaN(date.getTime())) return date.toISOString();
+         } else {
+            const date = new Date(Date.UTC(ano, mes - 1, dia, 12, 0, 0));
+            if (!isNaN(date.getTime())) return date.toISOString();
+         }
+      }
+    }
+    return null;
+  };
+
+  const combinarDataHora = (dataISO, horaVal) => {
+    if (!dataISO) return null;
+    if (horaVal === undefined || horaVal === null || String(horaVal).trim() === '') return dataISO;
+    
+    const dt = new Date(dataISO);
+    const year = dt.getUTCFullYear();
+    const month = dt.getUTCMonth();
+    const day = dt.getUTCDate();
+
+    let hours = 0;
+    let minutes = 0;
+
+    if (typeof horaVal === 'number') {
+      const totalSeconds = Math.round(horaVal * 86400);
+      hours = Math.floor(totalSeconds / 3600) % 24;
+      minutes = Math.floor((totalSeconds % 3600) / 60);
+    } else if (typeof horaVal === 'string') {
+      const v = horaVal.trim();
+      if (v.includes('T') || v.includes('-') || v.includes('/')) {
+        const timeDate = new Date(v);
+        if (!isNaN(timeDate.getTime())) {
+          hours = v.toUpperCase().includes('Z') ? timeDate.getUTCHours() : timeDate.getHours();
+          minutes = v.toUpperCase().includes('Z') ? timeDate.getUTCMinutes() : timeDate.getMinutes();
+        }
+      } else {
+        const parts = v.split(':');
+        if (parts.length >= 2) {
+          hours = parseInt(parts[0], 10) || 0;
+          minutes = parseInt(parts[1], 10) || 0;
+        }
+      }
+    }
+    
+    const localDate = new Date(year, month, day, hours, minutes, 0, 0);
+    return localDate.toISOString();
+  };
+
+  data.forEach((row, index) => {
+    const getVal = (keys) => {
+      const normalize = (k) => k ? String(k).toLowerCase().replace(/\s+/g, ' ').trim() : '';
+      for (const k of keys) {
+        let val = row[k];
+        if (val === undefined) {
+          const target = normalize(k);
+          const foundKey = Object.keys(row).find(rk => normalize(rk) === target);
+          if (foundKey) val = row[foundKey];
+        }
+        if (val !== undefined && val !== null && String(val).trim() !== '') {
+          return val;
+        }
+      }
+      return undefined;
+    };
+
+    const nome = getVal(['TAREFA', 'tarefa', 'Nome', 'nome', 'Etapa', 'etapa', 'Etapas', 'etapas', 'Tarefas', 'tarefas', 'Atividade', 'atividade', 'Descrição', 'descricao', 'Item', 'item']);
+    const codigo = getVal(['CODIGO', 'codigo', 'CÓDIGO', 'código', 'Codigo', 'Código', 'Cod', 'COD', 'ID', 'Id', 'Code']);
+    
+    if (!nome) return;
+
+    const normalizeVal = (str) => str ? String(str).trim().replace(/\s+/g, ' ').toLowerCase() : '';
+    const uniqueKey = `${codigo ? 'code:' + normalizeVal(codigo) : ''}|name:${normalizeVal(nome)}`;
+    
+    if (chavesProcessadas.has(uniqueKey)) return;
+    chavesProcessadas.add(uniqueKey);
+
+    const existing = existingSteps.find(e => {
+      if (usedIds.has(e.id)) return false;
+      const normalize = (str) => str ? String(str).trim().replace(/\s+/g, ' ').toLowerCase() : '';
+      const codeA = normalize(codigo);
+      const codeB = normalize(e.codigo);
+      const nameA = normalize(nome);
+      const nameB = normalize(e.nome);
+      if (codeA && codeB && codeA === codeB && nameA === nameB) return true;
+      if (codeA && codeB && codeA === codeB) return true;
+      if (nameA === nameB) {
+        if (codeA && codeB && codeA !== codeB) return false;
+        return true;
+      }
+      return false;
+    });
+
+    if (existing) {
+      usedIds.add(existing.id);
+    }
+
+    let rawOrdem = getVal(['D+', 'd+', 'Ordem', 'ordem', 'Dia', 'dia']);
+    let ordem = parseInt(rawOrdem);
+    if (isNaN(ordem)) ordem = index + 1;
+
+    let dataPrevista = formatarData(getVal(['INÍCIO', 'início', 'inicio', 'Data Prevista', 'dataPrevista', 'Data de Início', 'Data de Inicio', 'Previsão', 'Previsao', 'Data', 'Date', 'Start', 'Planejado', 'Data Planejada']));
+    const horaInicio = getVal(['HORA INICIO', 'Hora Inicio', 'hora inicio', 'Hora Início']);
+    dataPrevista = combinarDataHora(dataPrevista, horaInicio);
+    
+    let dataReal = formatarData(getVal(['TÉRMINO', 'término', 'termino', 'Data Real', 'dataReal', 'Data Conclusão', 'Data Conclusao', 'Conclusão', 'Conclusao', 'Realizado', 'Executado', 'Fim', 'Data de Término', 'Data de Termino', 'Data Fim', 'Data Final', 'End']));
+    const horaTermino = getVal(['HORA TÉRMINO', 'Hora Término', 'hora término', 'HORA TERMICA', 'Hora Termica']);
+    dataReal = combinarDataHora(dataReal, horaTermino);
+    
+    // Lógica de Status Corrigida
+    let status = 'pendente';
+    const now = new Date();
+
+    let rawStatus = getVal(['STATUS', 'Status', 'status', 'SITUAÇÃO', 'Situação', 'situacao', 'Estado', 'estado']);
+    
+    if (rawStatus) {
+       const s = String(rawStatus).toLowerCase();
+       if (s.includes('conclu')) {
+           status = 'concluido';
+           if (dataReal && dataPrevista && new Date(dataReal) > new Date(dataPrevista)) {
+               status = 'concluido_atraso';
+           }
+       }
+       else if (s.includes('atras')) status = 'atrasado';
+       else if (s.includes('andamento')) status = 'em_andamento';
+       else status = 'pendente';
+    } else {
+       if (dataReal) {
+           status = 'concluido';
+           if (dataPrevista && new Date(dataReal) > new Date(dataPrevista)) {
+               status = 'concluido_atraso';
+           }
+       } else {
+           if (dataPrevista && new Date(dataPrevista) < now) {
+               status = 'atrasado';
+           } else {
+               status = 'pendente';
+           }
+       }
+    }
+
+    etapasValidadas.push({
+      id: existing ? existing.id : null,
+      nome: nome,
+      area: getVal(['ÁREA', 'área', 'area', 'Área']) || '',
+      responsavel: getVal(['ATRIBUÍDO PARA', 'atribuído para', 'atribuido para', 'Responsável', 'responsavel', 'Responsavel', 'Owner']) || '',
+      dataPrevista: dataPrevista,
+      dataReal: dataReal,
+      ordem: ordem,
+      codigo: (codigo !== undefined && codigo !== null) ? String(codigo) : '',
+      status: status,
+      executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPor', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || ''
+    });
+  });
+
+  return etapasValidadas;
 }
 function Card({ title, value, subtitle, icon, color }) {
   const colors = {
