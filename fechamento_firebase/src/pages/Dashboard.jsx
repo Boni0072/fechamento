@@ -8,6 +8,13 @@ import { Clock, AlertTriangle, Activity, Target, X, Info, RefreshCw, ChevronDown
 import * as XLSX from 'xlsx';
 
 import { getDatabase, ref, onValue } from "firebase/database";
+
+const processRealtimeData = (data) => {
+  if (!data) return [];
+  const dataArray = Array.isArray(data) ? data : Object.values(data);
+  return processData(dataArray, []);
+};
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const { empresaAtual, empresas, selecionarEmpresa } = useAuth();
@@ -41,6 +48,7 @@ export default function Dashboard() {
   const [periodos, setPeriodos] = useState([]);
   const [periodoSelecionado, setPeriodoSelecionado] = useState(null);
   const [etapas, setEtapas] = useState([]);
+  const [stepsByCompany, setStepsByCompany] = useState({});
   const [selectedUser, setSelectedUser] = useState(null);
   const [selectedStatus, setSelectedStatus] = useState(null);
   const [empresaDados, setEmpresaDados] = useState(null);
@@ -67,6 +75,10 @@ export default function Dashboard() {
     desempenhoPorEmpresa: [],
     rankingApoio: []
   });
+
+  useEffect(() => {
+    setPeriodoSelecionado(null);
+  }, [empresaAtual]);
 
   useEffect(() => {
     if (!empresaAtual && (!empresas || empresas.length === 0)) return;
@@ -119,9 +131,13 @@ export default function Dashboard() {
           index === self.findIndex(p => p.mes === item.mes && p.ano === item.ano)
         );
         setPeriodos(periodosUnicos);
-        if (periodosUnicos.length > 0 && !periodoSelecionado) {
-          setPeriodoSelecionado(periodosUnicos[0]);
-        }
+        
+        setPeriodoSelecionado(prev => {
+            if (!prev) return periodosUnicos[0] || null;
+            // Tenta manter o período selecionado ou busca um correspondente
+            const match = periodosUnicos.find(p => p.id === prev.id || (p.mes === prev.mes && p.ano === prev.ano));
+            return match || periodosUnicos[0] || null;
+        });
       });
     }
     return () => {
@@ -130,47 +146,60 @@ export default function Dashboard() {
     };
   }, [empresaAtual, viewAllCompanies, empresas]);
 
+  // Effect separado para Single Company (evita recarregar quando 'empresas' muda)
   useEffect(() => {
-    // Se estiver em modo "Todas as Empresas", não há uma fonte única de dados em tempo real.
-    // Limpa os dados para evitar exibir dados de uma empresa anterior.
-    if (viewAllCompanies) {
-      setEtapas([]);
-      calcularKpis([]);
-      return;
-    }
-
-    if (!empresaAtual) {
-      setEtapas([]);
-      calcularKpis([]);
-      return;
-    }
-
-    // Limpa dados da empresa anterior para evitar exibir dados incorretos durante a troca
-    setEtapas([]);
-    calcularKpis([]);
-
+    if (!empresaAtual) return;
+    
     const db = getDatabase();
     const googleTableRef = ref(db, `tenants/${empresaAtual.id}/tabelaGoogle`);
+    
+    // Limpa dados anteriores para evitar mistura visual durante a troca
+    setStepsByCompany({});
 
-    const unsubscribe = onValue(googleTableRef, (snapshot) => {
-      let data = snapshot.val()
-      if (data) {
-        // Process the data from Realtime Database and update state
-        console.log("Data from Realtime Database:", data);
-        const processedEtapas = processRealtimeData(data);
-        setEtapas(processedEtapas);
-        calcularKpis(processedEtapas);
-      } else {
-        setEtapas([]);
-        calcularKpis([]);
-      }
-
+    const unsub = onValue(googleTableRef, (snapshot) => {
+      const data = snapshot.val();
+      const processedEtapas = data ? processRealtimeData(data) : [];
+      const etapasComNomeEmpresa = processedEtapas.map(etapa => ({
+        ...etapa,
+        empresaNome: empresaAtual.nome,
+        empresaId: empresaAtual.id,
+      }));
+      setStepsByCompany({ [empresaAtual.id]: etapasComNomeEmpresa });
     });
 
-    return () => {
-      unsubscribe();
-    };
-  }, [empresaAtual, viewAllCompanies]);
+    return () => unsub();
+  }, [empresaAtual]);
+
+  // Effect separado para View All Companies
+  useEffect(() => {
+    if (empresaAtual) return;
+    if (!empresas || empresas.length === 0) return;
+
+    const db = getDatabase();
+    setStepsByCompany({});
+
+    const unsubs = empresas.map(emp => {
+      const googleTableRef = ref(db, `tenants/${emp.id}/tabelaGoogle`);
+      return onValue(googleTableRef, (snapshot) => {
+        const data = snapshot.val();
+        const processedEtapas = data ? processRealtimeData(data) : [];
+        const etapasComNomeEmpresa = processedEtapas.map(etapa => ({
+          ...etapa,
+          empresaNome: emp.nome,
+          empresaId: emp.id,
+        }));
+        setStepsByCompany(prev => ({ ...prev, [emp.id]: etapasComNomeEmpresa }));
+      });
+    });
+
+    return () => unsubs.forEach(unsub => unsub());
+  }, [empresas, empresaAtual]);
+
+  useEffect(() => {
+    const allSteps = Object.values(stepsByCompany).flat();
+    setEtapas(allSteps);
+    calcularKpis(allSteps);
+  }, [stepsByCompany]);
 
   const handleSync = useCallback(async (isAuto = false) => {
     if (isSyncingRef.current) return;
@@ -479,13 +508,6 @@ export default function Dashboard() {
     });
   };
 
-  const processRealtimeData = (data) => {
-    if (!data) return [];
-    // Converte o objeto do Firebase em um array que a função processData espera.
-    const dataArray = Array.isArray(data) ? data : Object.values(data);
-    return processData(dataArray, []);
-  };
-  
   // Dados para o Gráfico de Rosca
   const chartData = [
     { key: 'concluidas_no_prazo', label: 'Concluídas no Prazo', value: kpis.concluidasNoPrazo, color: '#22c55e', twColor: 'green' },

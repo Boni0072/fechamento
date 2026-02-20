@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
+import { getDatabase, ref, onValue } from 'firebase/database';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { getPeriodos, getEtapas, calcularIndicadores, getStatusLabel } from '../services/database';
@@ -96,7 +97,7 @@ export default function Relatorios() {
   }, [allPeriodsMap]);
 
   useEffect(() => {
-    if (!periodoSelecionado || !empresasParaBuscar || empresasParaBuscar.length === 0) {
+    if (!empresasParaBuscar || empresasParaBuscar.length === 0) {
       setEtapas([]);
       setStepsByCompany({});
       return;
@@ -104,40 +105,134 @@ export default function Relatorios() {
 
     setStepsByCompany({});
     const unsubs = [];
+    const db = getDatabase();
     
     empresasParaBuscar.forEach(emp => {
-      const empPeriods = allPeriodsMap[emp.id] || [];
-      const match = empPeriods.find(p => p.mes === periodoSelecionado.mes && p.ano === periodoSelecionado.ano);
-      
-      if (match) {
-        const unsubscribe = getEtapas(emp.id, match.id, (data) => {
-          setStepsByCompany(prev => ({
-            ...prev,
-            [emp.id]: data.map(d => ({ 
-                ...d, 
-                empresaId: emp.id, 
-                empresaNome: emp.nome
-            }))
-          }));
-        });
-        unsubs.push(unsubscribe);
-      } else {
-         setStepsByCompany(prev => {
-             const next = { ...prev };
-             delete next[emp.id];
-             return next;
-         });
-      }
+      const googleTableRef = ref(db, `tenants/${emp.id}/tabelaGoogle`);
+      const unsubscribe = onValue(googleTableRef, (snapshot) => {
+        const data = snapshot.val();
+        const processedEtapas = data ? processData(data) : [];
+        setStepsByCompany(prev => ({
+          ...prev,
+          [emp.id]: processedEtapas.map(d => ({ 
+              ...d, 
+              empresaId: emp.id, 
+              empresaNome: emp.nome
+          }))
+        }));
+      });
+      unsubs.push(unsubscribe);
     });
 
     return () => unsubs.forEach(u => u());
-  }, [periodoSelecionado, empresasParaBuscar, allPeriodsMap]);
+  }, [empresasParaBuscar]);
 
   useEffect(() => {
     const allSteps = Object.values(stepsByCompany).flat();
-    setEtapas(allSteps);
-    setIndicadores(calcularIndicadores(allSteps));
-  }, [stepsByCompany]);
+    if (periodoSelecionado) {
+      const filteredSteps = allSteps.filter(etapa => {
+          if (!etapa.dataPrevista) return false;
+          const etapaDate = new Date(etapa.dataPrevista);
+          return etapaDate.getMonth() + 1 === periodoSelecionado.mes && etapaDate.getFullYear() === periodoSelecionado.ano;
+      });
+      setEtapas(filteredSteps);
+      setIndicadores(calcularIndicadores(filteredSteps));
+    } else {
+      setEtapas(allSteps);
+      setIndicadores(calcularIndicadores(allSteps));
+    }
+  }, [stepsByCompany, periodoSelecionado]);
+
+  // Adiciona a função processData que está faltando neste arquivo
+  const processData = (data) => {
+    if (!Array.isArray(data)) return [];
+    const etapasValidadas = [];
+  
+    const formatarData = (valor) => {
+      if (valor === null || valor === undefined || String(valor).trim() === '') return null;
+  
+      if (typeof valor === 'number') {
+        const valorAjustado = Math.floor(valor + 0.001);
+        const date = new Date((valorAjustado - 25569) * 86400 * 1000 + 43200000);
+        return date.toISOString();
+      }
+      
+      if (typeof valor === 'string') {
+        const v = valor.trim();
+        
+        const dmy = v.match(/^(\d{1,2})\/\-\.\/\-\.(?:[\sT]+(\d{1,2}):(\d{2}))?/);
+        if (dmy) {
+          const dia = parseInt(dmy[1], 10);
+          const mes = parseInt(dmy[2], 10);
+          let ano = parseInt(dmy[3], 10);
+          const hora = dmy[4] ? parseInt(dmy[4], 10) : null;
+          const min = dmy[5] ? parseInt(dmy[5], 10) : null;
+          
+          if (ano < 100) ano += 2000;
+  
+          if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) {
+               if (hora !== null) {
+                 const date = new Date(ano, mes - 1, dia, hora, min || 0, 0);
+                 if (!isNaN(date.getTime())) return date.toISOString();
+               } else {
+                 const date = new Date(Date.UTC(ano, mes - 1, dia, 12, 0, 0));
+                 if (!isNaN(date.getTime())) return date.toISOString();
+               }
+          }
+        }
+  
+        const ymd = v.match(/^(\d{4})\/\-\.\/\-\.(?:[\sT]+(\d{1,2}):(\d{2}))?/);
+        if (ymd) {
+           const ano = parseInt(ymd[1], 10);
+           const mes = parseInt(ymd[2], 10);
+           const dia = parseInt(ymd[3], 10);
+           const hora = ymd[4] ? parseInt(ymd[4], 10) : null;
+           const min = ymd[5] ? parseInt(ymd[5], 10) : null;
+  
+           if (hora !== null) {
+              const date = new Date(ano, mes - 1, dia, hora, min || 0, 0);
+              if (!isNaN(date.getTime())) return date.toISOString();
+           } else {
+              const date = new Date(Date.UTC(ano, mes - 1, dia, 12, 0, 0));
+              if (!isNaN(date.getTime())) return date.toISOString();
+           }
+        }
+      }
+      return null;
+    };
+  
+    data.forEach((row) => {
+      const getVal = (keys) => {
+        const normalize = (k) => k ? String(k).toLowerCase().replace(/\s+/g, ' ').trim() : '';
+        for (const k of keys) {
+          let val = row[k];
+          if (val === undefined) {
+            const target = normalize(k);
+            const foundKey = Object.keys(row).find(rk => normalize(rk) === target);
+            if (foundKey) val = row[foundKey];
+          }
+          if (val !== undefined && val !== null && String(val).trim() !== '') {
+            return val;
+          }
+        }
+        return undefined;
+      };
+  
+      const nome = getVal(['TAREFA', 'tarefa', 'Nome', 'nome', 'Etapa', 'etapa']);
+      if (!nome) return;
+  
+      etapasValidadas.push({
+        ...row, // Keep original data
+        nome: nome,
+        area: getVal(['ÁREA', 'área', 'area']) || '',
+        responsavel: getVal(['ATRIBUÍDO PARA', 'atribuído para', 'Responsável', 'responsavel']) || '',
+        dataPrevista: formatarData(getVal(['INÍCIO', 'início', 'Data Prevista', 'dataPrevista'])),
+        dataReal: formatarData(getVal(['TÉRMINO', 'término', 'Data Real', 'dataReal'])),
+      });
+    });
+  
+    return etapasValidadas;
+  };
 
   if (loadingPermissoes || loadingProfile) {
     return (

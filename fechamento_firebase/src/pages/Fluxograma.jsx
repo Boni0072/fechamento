@@ -234,50 +234,40 @@ export default function Fluxograma() {
   }, [allPeriodsMap]);
 
   useEffect(() => {
-    // Se tiver empresa selecionada, usa o Realtime Database (igual Etapas.jsx)
-    if (empresaAtual) {
-      // Limpa etapas da empresa anterior para evitar "flash" de dados incorretos
-      setEtapas([]);
-
-      const db = getDatabase();
-      const googleTableRef = ref(db, `tenants/${empresaAtual.id}/tabelaGoogle`);
-
-      const unsubscribe = onValue(googleTableRef, (snapshot) => {
-        const data = snapshot.val();
-        if (data) {
-          const processed = processRealtimeData(data);
-          setEtapas(processed);
-        } else {
-          setEtapas([]);
-        }
-      });
-
-      return () => unsubscribe();
-    }
-
-    // Fallback para Firestore (apenas se não tiver empresa selecionada / visualizando todas)
-    if (!periodoSelecionado || !empresasParaBuscar.length || empresaAtual) {
-      setEtapas([]);
-      setStepsByCompany({});
-      return;
-    }
-    setStepsByCompany({});
+    const db = getDatabase();
     const unsubs = [];
-    empresasParaBuscar.forEach(emp => {
-      const empPeriods = allPeriodsMap[emp.id] || [];
-      const match = empPeriods.find(p => p.mes === periodoSelecionado.mes && p.ano === periodoSelecionado.ano);
-      if (match) {
-        const unsubscribe = getEtapas(emp.id, match.id, (data) => {
+    setStepsByCompany({}); // Limpa dados anteriores para evitar flash de dados incorretos
+
+    if (empresaAtual) {
+      const googleTableRef = ref(db, `tenants/${empresaAtual.id}/tabelaGoogle`);
+      const unsub = onValue(googleTableRef, (snapshot) => {
+        const data = snapshot.val();
+        const processed = data ? processRealtimeData(data) : [];
+        // Para visão única, atualiza 'etapas' diretamente
+        setEtapas(processed.map(e => ({ ...e, empresaId: empresaAtual.id, empresaNome: empresaAtual.nome })));
+      });
+      unsubs.push(unsub);
+    } else { // Modo Consolidado
+      if (!empresasParaBuscar || empresasParaBuscar.length === 0) {
+        setEtapas([]);
+        return;
+      }
+      empresasParaBuscar.forEach(emp => {
+        const googleTableRef = ref(db, `tenants/${emp.id}/tabelaGoogle`);
+        const unsub = onValue(googleTableRef, (snapshot) => {
+          const data = snapshot.val();
+          const processed = data ? processRealtimeData(data) : [];
           setStepsByCompany(prev => ({
             ...prev,
-            [emp.id]: data.map(d => ({ ...d, empresaId: emp.id, empresaNome: emp.nome, periodoId: match.id }))
+            [emp.id]: processed.map(d => ({ ...d, empresaId: emp.id, empresaNome: emp.nome }))
           }));
         });
-        unsubs.push(unsubscribe);
-      }
-    });
+        unsubs.push(unsub);
+      });
+    }
+
     return () => unsubs.forEach(u => u());
-  }, [periodoSelecionado, empresasParaBuscar, allPeriodsMap, empresaAtual]);
+  }, [empresasParaBuscar, empresaAtual]);
 
   useEffect(() => {
     const allSteps = Object.values(stepsByCompany).flat();
@@ -287,7 +277,7 @@ export default function Fluxograma() {
       if (!b.dataPrevista) return -1;
       return new Date(a.dataPrevista) - new Date(b.dataPrevista);
     });
-    if (!empresaAtual) setEtapas(sortedData);
+    if (!empresaAtual) setEtapas(sortedData); // Apenas atualiza se estiver em modo consolidado
   }, [stepsByCompany]);
 
   const handleSync = useCallback(async (isAuto = false) => {
