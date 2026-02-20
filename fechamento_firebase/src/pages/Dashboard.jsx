@@ -145,6 +145,10 @@ export default function Dashboard() {
       return;
     }
 
+    // Limpa dados da empresa anterior para evitar exibir dados incorretos durante a troca
+    setEtapas([]);
+    calcularKpis([]);
+
     const db = getDatabase();
     const googleTableRef = ref(db, `tenants/${empresaAtual.id}/tabelaGoogle`);
 

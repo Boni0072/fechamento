@@ -124,15 +124,21 @@ export default function Etapas() {
   }, [empresasParaBuscar, empresaAtual]);
 
   useEffect(() => {
-    if (!empresaAtual) return;
+    if (!empresaAtual) {
+      setEtapas([]);
+      setLoadingData(false);
+      return;
+    }
 
-   const db = getDatabase();
+    setEtapas([]);
+    setLoadingData(true);
+
+    const db = getDatabase();
     const googleTableRef = ref(db, `tenants/${empresaAtual.id}/tabelaGoogle`);
 
     const unsubscribe = onValue(googleTableRef, (snapshot) => {
-     let data = snapshot.val();
+      let data = snapshot.val();
       if (data) {
-        setLoadingData(true);
         // Process the data from Realtime Database and update state
         console.log("Data from Realtime Database:", data);
         const allEtapas = processRealtimeData(data);
@@ -144,12 +150,11 @@ export default function Etapas() {
         
         const uniqueResps = [...new Set(allEtapas.map(e => e.responsavel).filter(Boolean))].sort();
         setResponsaveis(uniqueResps.map((r, i) => ({ id: i, nome: r })));
-        setLoadingData(false);
       } else {
         setEtapas([]);
-        setLoadingData(false);
       }
-     });
+      setLoadingData(false);
+    });
 
     return () => {
       unsubscribe();

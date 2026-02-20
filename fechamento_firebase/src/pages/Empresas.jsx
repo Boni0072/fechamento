@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { getFirestore, doc, updateDoc, setDoc, onSnapshot, deleteDoc } from 'firebase/firestore';
+import { getFirestore, doc, updateDoc, setDoc, onSnapshot, deleteDoc, getDoc } from 'firebase/firestore';
+import { getDatabase, ref, set } from 'firebase/database';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { checkPermission } from './permissionUtils';
-import { Plus, Building2, Check, FileSpreadsheet, RefreshCw, Trash2, Pencil } from 'lucide-react';
+import { Plus, Building2, Check, FileSpreadsheet, RefreshCw, Trash2, Pencil, Palette, Upload, Image as ImageIcon } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 export default function Empresas() {
@@ -48,6 +49,55 @@ export default function Empresas() {
   const [selectedSheet, setSelectedSheet] = useState('');
   const [currentWorkbook, setCurrentWorkbook] = useState(null);
   const [syncingId, setSyncingId] = useState(null);
+
+  // Estados para Configuração de Aparência
+  const [showAppearanceModal, setShowAppearanceModal] = useState(false);
+  const [selectedEmpresaAppearance, setSelectedEmpresaAppearance] = useState(null);
+  const [appearanceConfig, setAppearanceConfig] = useState({
+    sidebarColor: '#111827',
+    sidebarTextColor: '#ffffff',
+    primaryColor: '#ea580c',
+    fontSize: 'normal',
+    logo: ''
+  });
+
+  // Função auxiliar para redimensionar imagem (Logo)
+  const resizeImage = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target.result;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_WIDTH = 200;
+          const MAX_HEIGHT = 200;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height) {
+            if (width > MAX_WIDTH) {
+              height *= MAX_WIDTH / width;
+              width = MAX_WIDTH;
+            }
+          } else {
+            if (height > MAX_HEIGHT) {
+              width *= MAX_HEIGHT / height;
+              height = MAX_HEIGHT;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/png'));
+        };
+        img.onerror = (error) => reject(error);
+      };
+      reader.onerror = (error) => reject(error);
+    });
+  };
 
   const formatSheetDate = (cell) => {
     // Se a célula estiver vazia, retorna uma string vazia.
@@ -308,16 +358,25 @@ export default function Empresas() {
             console.warn("Erro ao buscar dados automaticamente:", fetchError);
          }
       }
+
+      // Processa os dados para garantir o formato correto
+      const processedData = processData(dadosTabela);
+
       // Validação: Se tem ID mas não conseguiu dados, impede o salvamento e avisa
-      if (spreadsheetId && (!dadosTabela || dadosTabela.length === 0)) {
-        throw new Error('Não foi possível obter os dados da planilha. Verifique se o ID está correto e se a planilha é pública (Qualquer pessoa com o link).');
+      if (spreadsheetId && (!processedData || processedData.length === 0)) {
+        throw new Error('Não foi possível obter dados válidos da planilha. Verifique o ID e o nome das colunas.');
       }
 
+      // 1. Salva apenas a CONFIGURAÇÃO no Firestore
       await setDoc(doc(db, 'tenants', configEmpresa.id), {
         spreadsheetId: spreadsheetId.trim(),
-        sheetName: selectedSheet,
-        tabelaGoogle: dadosTabela
+        sheetName: selectedSheet
       }, { merge: true });
+
+      // 2. Salva os DADOS no Realtime Database (para leitura rápida nas outras telas)
+      const rtdb = getDatabase();
+      const tabelaRef = ref(rtdb, `tenants/${configEmpresa.id}/tabelaGoogle`);
+      await set(tabelaRef, processedData);
       
       setShowConfigModal(false);
       setConfigEmpresa(null);
@@ -361,10 +420,12 @@ export default function Empresas() {
       const workbook = XLSX.read(csvText, { type: 'string' });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const dadosTabela = XLSX.utils.sheet_to_json(sheet, { raw: true });
+      const processedData = processData(dadosTabela);
 
-      const db = getFirestore();
-      // Atualiza o cache no Firebase
-      await setDoc(doc(db, 'tenants', empresa.id), { tabelaGoogle: dadosTabela }, { merge: true });
+      // Atualiza o cache no Realtime Database
+      const rtdb = getDatabase();
+      const tabelaRef = ref(rtdb, `tenants/${empresa.id}/tabelaGoogle`);
+      await set(tabelaRef, processedData);
     } catch (err) {
       console.error("Erro na sincronização:", err);
       setError(`Erro na sincronização: ${err.message}`);
@@ -381,10 +442,15 @@ export default function Empresas() {
     setError('');
     try {
       const db = getFirestore();
+      // Remove configuração do Firestore
       await setDoc(doc(db, 'tenants', configEmpresa.id), {
-        spreadsheetId: null,
-        tabelaGoogle: null
+        spreadsheetId: null
       }, { merge: true });
+      
+      // Remove dados do Realtime Database
+      const rtdb = getDatabase();
+      const tabelaRef = ref(rtdb, `tenants/${configEmpresa.id}/tabelaGoogle`);
+      await set(tabelaRef, null);
       
       setSpreadsheetId('');
       setSelectedSheet('');
@@ -397,6 +463,101 @@ export default function Empresas() {
       setError(err.message || 'Erro ao desconectar planilha.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleOpenAppearance = async (e, empresa) => {
+    e.stopPropagation();
+    setSelectedEmpresaAppearance(empresa);
+    // 1. Define estado inicial com dados locais (para abrir rápido)
+    setAppearanceConfig({
+      sidebarColor: empresa.appearance?.sidebarColor || '#111827',
+      sidebarTextColor: empresa.appearance?.sidebarTextColor || '#ffffff',
+      primaryColor: empresa.appearance?.primaryColor || '#ea580c',
+      fontSize: empresa.appearance?.fontSize || 'normal',
+      logo: empresa.appearance?.logo || ''
+    });
+    setShowAppearanceModal(true);
+
+    // 2. Busca dados frescos do Firestore para garantir que o modal mostre a versão mais recente
+    try {
+      const db = getFirestore();
+      const docSnap = await getDoc(doc(db, 'tenants', empresa.id));
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const app = data.appearance || {};
+        setAppearanceConfig({
+          sidebarColor: app.sidebarColor || '#111827',
+          sidebarTextColor: app.sidebarTextColor || '#ffffff',
+          primaryColor: app.primaryColor || '#ea580c',
+          fontSize: app.fontSize || 'normal',
+          logo: app.logo || ''
+        });
+      }
+    } catch (err) {
+      console.error("Erro ao buscar dados atualizados da empresa:", err);
+    }
+  };
+
+  const handleOpenGlobalAppearance = async () => {
+    setSelectedEmpresaAppearance({ id: 'global', nome: 'Visão Consolidada' });
+    const db = getFirestore();
+    try {
+        const docSnap = await getDoc(doc(db, 'system_settings', 'global_appearance'));
+        const data = docSnap.exists() ? docSnap.data() : {};
+        setAppearanceConfig({
+          sidebarColor: data.sidebarColor || '#111827',
+          sidebarTextColor: data.sidebarTextColor || '#ffffff',
+          primaryColor: data.primaryColor || '#ea580c',
+          fontSize: data.fontSize || 'normal',
+          logo: data.logo || ''
+        });
+        setShowAppearanceModal(true);
+    } catch (error) {
+        console.error("Erro ao buscar aparência global:", error);
+        // Fallback defaults
+        setAppearanceConfig({ sidebarColor: '#111827', sidebarTextColor: '#ffffff', primaryColor: '#ea580c', fontSize: 'normal', logo: '' });
+        setShowAppearanceModal(true);
+    }
+  };
+
+  const handleSaveAppearance = async (e) => {
+    e.preventDefault();
+    if (!selectedEmpresaAppearance) return;
+    setLoading(true);
+    try {
+      const db = getFirestore();
+      
+      if (selectedEmpresaAppearance.id === 'global') {
+         await setDoc(doc(db, 'system_settings', 'global_appearance'), {
+            ...appearanceConfig
+         }, { merge: true });
+      } else {
+         // Usar setDoc com merge: true é mais robusto que updateDoc.
+         await setDoc(doc(db, 'tenants', selectedEmpresaAppearance.id), {
+           appearance: appearanceConfig
+         }, { merge: true });
+      }
+
+      setShowAppearanceModal(false);
+      setSelectedEmpresaAppearance(null);
+    } catch (err) {
+      console.error("Erro ao salvar aparência:", err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogoUpload = async (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      try {
+        const resized = await resizeImage(file);
+        setAppearanceConfig(prev => ({ ...prev, logo: resized }));
+      } catch (err) {
+        console.error("Erro ao processar imagem", err);
+      }
     }
   };
 
@@ -426,18 +587,27 @@ export default function Empresas() {
           </div>
         </div>
         
-        <button
-          onClick={() => {
-            setEmpresaEditando(null);
-            setNome('');
-            setCnpj('');
-            setShowModal(true);
-          }}
-          className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
-        >
-          <Plus className="w-4 h-4" />
-          Nova Empresa
-        </button>
+        <div className="flex gap-2">
+            <button
+              onClick={handleOpenGlobalAppearance}
+              className="flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 transition-colors"
+            >
+              <Palette className="w-4 h-4" />
+              Aparência Consolidada
+            </button>
+            <button
+              onClick={() => {
+                setEmpresaEditando(null);
+                setNome('');
+                setCnpj('');
+                setShowModal(true);
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700"
+            >
+              <Plus className="w-4 h-4" />
+              Nova Empresa
+            </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -451,8 +621,12 @@ export default function Empresas() {
           >
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 bg-primary-100 rounded-xl flex items-center justify-center">
-                  <Building2 className="w-6 h-6 text-primary-600" />
+                <div className={`w-12 h-12 rounded-lg border border-slate-200 flex items-center justify-center shrink-0 overflow-hidden ${empresa.appearance?.logo ? 'bg-white' : 'bg-slate-50'}`}>
+                  {empresa.appearance?.logo ? (
+                    <img src={empresa.appearance.logo} alt={empresa.nome} className="w-full h-full object-contain p-1" />
+                  ) : (
+                    <Building2 className="w-6 h-6 text-slate-400" />
+                  )}
                 </div>
                 <div>
                   <h3 className="font-semibold text-slate-800">{empresa.nome}</h3>
@@ -466,6 +640,14 @@ export default function Empresas() {
                   title="Editar Empresa"
                 >
                   <Pencil className="w-5 h-5" />
+                </button>
+
+                <button
+                  onClick={(e) => handleOpenAppearance(e, empresa)}
+                  className="p-2 rounded-lg text-slate-400 hover:text-purple-600 hover:bg-purple-50 transition-colors"
+                  title="Configurar Aparência"
+                >
+                  <Palette className="w-5 h-5" />
                 </button>
 
                 <button
@@ -533,7 +715,12 @@ export default function Empresas() {
       {showModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md animate-slideIn">
-            <div className="p-4 border-b border-slate-100">
+            <div className="p-4 border-b border-slate-100 flex items-center gap-3">
+              {empresaEditando?.appearance?.logo && (
+                <div className="w-10 h-10 rounded-lg border border-slate-200 bg-white flex items-center justify-center overflow-hidden shrink-0">
+                  <img src={empresaEditando.appearance.logo} alt="Logo" className="w-full h-full object-contain p-0.5" />
+                </div>
+              )}
               <h3 className="text-lg font-semibold text-slate-800">{empresaEditando ? 'Editar Empresa' : 'Nova Empresa'}</h3>
             </div>
             
@@ -594,7 +781,14 @@ export default function Empresas() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl animate-slideIn max-h-[90vh] overflow-y-auto">
             <form onSubmit={handleSaveConfig}>
               <div className="p-4 border-b border-slate-100 flex items-center justify-between sticky top-0 bg-white z-20">
-                <h3 className="text-lg font-semibold text-slate-800">Conexão Google Planilhas</h3>
+                <div className="flex items-center gap-3">
+                  {configEmpresa?.appearance?.logo && (
+                    <div className="w-8 h-8 rounded border border-slate-200 bg-white flex items-center justify-center overflow-hidden shrink-0">
+                      <img src={configEmpresa.appearance.logo} alt="Logo" className="w-full h-full object-contain p-0.5" />
+                    </div>
+                  )}
+                  <h3 className="text-lg font-semibold text-slate-800">Conexão Google Planilhas</h3>
+                </div>
                 <div className="flex gap-2">
                   <button
                     type="button"
@@ -721,6 +915,272 @@ export default function Empresas() {
           </div>
         </div>
       )}
+
+      {/* Modal Configuração de Aparência */}
+      {showAppearanceModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md animate-slideIn">
+            <div className="p-4 border-b border-slate-100 flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                {appearanceConfig.logo && (
+                  <div className="w-10 h-10 rounded-lg border border-slate-200 bg-white flex items-center justify-center overflow-hidden shrink-0">
+                    <img src={appearanceConfig.logo} alt="Logo" className="w-full h-full object-contain p-0.5" />
+                  </div>
+                )}
+                <h3 className="text-lg font-semibold text-slate-800">Aparência: {selectedEmpresaAppearance?.nome}</h3>
+              </div>
+              <button onClick={() => setShowAppearanceModal(false)} className="text-slate-400 hover:text-slate-600">
+                <Trash2 className="w-5 h-5 rotate-45" /> {/* Using Trash as close icon placeholder or replace with X */}
+              </button>
+            </div>
+            
+            <form onSubmit={handleSaveAppearance} className="p-6 space-y-6">
+              {/* Logo Upload */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Logo da Empresa</label>
+                <div className="flex items-center gap-4">
+                  <div className="w-20 h-20 bg-slate-100 rounded-lg border border-slate-200 flex items-center justify-center overflow-hidden relative group">
+                    {appearanceConfig.logo ? (
+                      <img src={appearanceConfig.logo} alt="Logo" className="w-full h-full object-contain" />
+                    ) : (
+                      <ImageIcon className="w-8 h-8 text-slate-300" />
+                    )}
+                    <label className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
+                      <Upload className="w-6 h-6 text-white" />
+                      <input type="file" className="hidden" accept="image/*" onChange={handleLogoUpload} />
+                    </label>
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    <p>Clique na imagem para alterar.</p>
+                    <p>Recomendado: PNG transparente.</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Cores */}
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Cor do Menu (Sidebar)</label>
+                  <div className="flex items-center gap-2 border border-slate-200 rounded-lg p-1">
+                    <input 
+                      type="color" 
+                      value={appearanceConfig.sidebarColor}
+                      onChange={(e) => setAppearanceConfig({...appearanceConfig, sidebarColor: e.target.value})}
+                      className="w-8 h-8 rounded cursor-pointer border-none bg-transparent p-0"
+                    />
+                    <span className="text-xs text-slate-600 uppercase">{appearanceConfig.sidebarColor}</span>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Cor da Fonte (Menu)</label>
+                  <div className="flex items-center gap-2 border border-slate-200 rounded-lg p-1">
+                    <input 
+                      type="color" 
+                      value={appearanceConfig.sidebarTextColor}
+                      onChange={(e) => setAppearanceConfig({...appearanceConfig, sidebarTextColor: e.target.value})}
+                      className="w-8 h-8 rounded cursor-pointer border-none bg-transparent p-0"
+                    />
+                    <span className="text-xs text-slate-600 uppercase">{appearanceConfig.sidebarTextColor}</span>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Cor Primária</label>
+                  <div className="flex items-center gap-2 border border-slate-200 rounded-lg p-1">
+                    <input 
+                      type="color" 
+                      value={appearanceConfig.primaryColor}
+                      onChange={(e) => setAppearanceConfig({...appearanceConfig, primaryColor: e.target.value})}
+                      className="w-8 h-8 rounded cursor-pointer border-none bg-transparent p-0"
+                    />
+                    <span className="text-xs text-slate-600 uppercase">{appearanceConfig.primaryColor}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tamanho da Fonte */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Tamanho da Fonte</label>
+                <select 
+                  value={appearanceConfig.fontSize}
+                  onChange={(e) => setAppearanceConfig({...appearanceConfig, fontSize: e.target.value})}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-500"
+                >
+                  <option value="small">Pequeno</option>
+                  <option value="normal">Normal (Padrão)</option>
+                  <option value="large">Grande</option>
+                </select>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAppearanceModal(false)}
+                  className="flex-1 px-4 py-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="flex-1 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50"
+                >
+                  {loading ? 'Salvando...' : 'Salvar Configuração'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+// Função auxiliar para processar e limpar os dados antes de salvar no Realtime Database
+const processData = (data) => {
+  if (!Array.isArray(data)) return [];
+  const etapasValidadas = [];
+
+  const formatarData = (valor) => {
+    if (valor === null || valor === undefined || String(valor).trim() === '') return null;
+
+    // 1. Número (Serial Excel)
+    if (typeof valor === 'number') {
+      const valorAjustado = Math.floor(valor + 0.001);
+      const date = new Date((valorAjustado - 25569) * 86400 * 1000 + 43200000);
+      return date.toISOString();
+    }
+    
+    if (typeof valor === 'string') {
+      const v = valor.trim();
+      
+      // 2. Formato DD/MM/AAAA HH:mm (Estrito BR)
+      const dmy = v.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})(?:[\sT]+(\d{1,2}):(\d{2}))?/);
+      if (dmy) {
+        const dia = parseInt(dmy[1], 10);
+        const mes = parseInt(dmy[2], 10);
+        let ano = parseInt(dmy[3], 10);
+        const hora = dmy[4] ? parseInt(dmy[4], 10) : null;
+        const min = dmy[5] ? parseInt(dmy[5], 10) : null;
+        
+        if (ano < 100) ano += 2000;
+
+        if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) {
+             if (hora !== null) {
+               const date = new Date(ano, mes - 1, dia, hora, min || 0, 0);
+               if (!isNaN(date.getTime())) return date.toISOString();
+             } else {
+               const date = new Date(Date.UTC(ano, mes - 1, dia, 12, 0, 0));
+               if (!isNaN(date.getTime())) return date.toISOString();
+             }
+        }
+      }
+
+      // 3. Formato ISO YYYY-MM-DD HH:mm
+      const ymd = v.match(/^(\d{4})\/\-\.\/\-\.(?:[\sT]+(\d{1,2}):(\d{2}))?/);
+      if (ymd) {
+         const ano = parseInt(ymd[1], 10);
+         const mes = parseInt(ymd[2], 10);
+         const dia = parseInt(ymd[3], 10);
+         const hora = ymd[4] ? parseInt(ymd[4], 10) : null;
+         const min = ymd[5] ? parseInt(ymd[5], 10) : null;
+
+         if (hora !== null) {
+            const date = new Date(ano, mes - 1, dia, hora, min || 0, 0);
+            if (!isNaN(date.getTime())) return date.toISOString();
+         } else {
+            const date = new Date(Date.UTC(ano, mes - 1, dia, 12, 0, 0));
+            if (!isNaN(date.getTime())) return date.toISOString();
+         }
+      }
+    }
+    return null;
+  };
+
+  const combinarDataHora = (dataISO, horaVal) => {
+    if (!dataISO) return null;
+    if (horaVal === undefined || horaVal === null || String(horaVal).trim() === '') return dataISO;
+    
+    const date = new Date(dataISO);
+    let hours = 0;
+    let minutes = 0;
+
+    if (typeof horaVal === 'number') {
+      const totalSeconds = Math.round(horaVal * 86400);
+      hours = Math.floor(totalSeconds / 3600) % 24;
+      minutes = Math.floor((totalSeconds % 3600) / 60);
+    } else if (typeof horaVal === 'string') {
+      const v = horaVal.trim();
+      if (v.includes('T') || v.includes('-') || v.includes('/')) {
+        const timeDate = new Date(v);
+        if (!isNaN(timeDate.getTime())) {
+          hours = v.toUpperCase().includes('Z') ? timeDate.getUTCHours() : timeDate.getHours();
+          minutes = v.toUpperCase().includes('Z') ? timeDate.getUTCMinutes() : timeDate.getMinutes();
+        }
+      } else {
+        const parts = v.split(':');
+        if (parts.length >= 2) {
+          hours = parseInt(parts[0], 10) || 0;
+          minutes = parseInt(parts[1], 10) || 0;
+        }
+      }
+    }
+    
+    const localDate = new Date(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), hours, minutes, 0, 0);
+    return localDate.toISOString();
+  };
+
+  data.forEach((row, index) => {
+    const getVal = (keys) => {
+      const normalize = (k) => k ? String(k).toLowerCase().replace(/\s+/g, ' ').trim() : '';
+      for (const k of keys) {
+        let val = row[k];
+        if (val === undefined) {
+          const target = normalize(k);
+          const foundKey = Object.keys(row).find(rk => normalize(rk) === target);
+          if (foundKey) val = row[foundKey];
+        }
+        if (val !== undefined && val !== null && String(val).trim() !== '') {
+          return val;
+        }
+      }
+      return undefined;
+    };
+
+    const nome = getVal(['TAREFA', 'tarefa', 'Nome', 'nome', 'Etapa', 'etapa', 'Etapas', 'etapas', 'Tarefas', 'tarefas', 'Atividade', 'atividade', 'Descrição', 'descricao', 'Item', 'item']);
+    if (!nome) return;
+
+    let rawOrdem = getVal(['D+', 'd+', 'Ordem', 'ordem', 'Dia', 'dia']);
+    let ordem = parseInt(rawOrdem);
+    if (isNaN(ordem)) ordem = index + 1;
+
+    let dataPrevista = formatarData(getVal(['INÍCIO', 'início', 'inicio', 'Data Prevista', 'dataPrevista', 'Data de Início', 'Data de Inicio', 'Previsão', 'Previsao', 'Data', 'Date', 'Start', 'Planejado', 'Data Planejada']));
+    const horaInicio = getVal(['HORA INICIO', 'Hora Inicio', 'hora inicio', 'Hora Início']);
+    dataPrevista = combinarDataHora(dataPrevista, horaInicio);
+    
+    let dataReal = formatarData(getVal(['TÉRMINO', 'término', 'termino', 'Data Real', 'dataReal', 'Data Conclusão', 'Data Conclusao', 'Conclusão', 'Conclusao', 'Realizado', 'Executado', 'Fim', 'Data de Término', 'Data de Termino', 'Data Fim', 'Data Final', 'End']));
+    const horaTermino = getVal(['HORA TÉRMINO', 'Hora Término', 'hora término', 'HORA TERMICA', 'Hora Termica']);
+    dataReal = combinarDataHora(dataReal, horaTermino);
+
+    let rawStatus = getVal(['STATUS', 'Status', 'status', 'SITUAÇÃO', 'Situação', 'situacao', 'Estado', 'estado']);
+    let status = 'pendente';
+    if (rawStatus && String(rawStatus).toLowerCase().includes('conclu')) {
+      status = 'concluido';
+    } else if (dataReal) {
+      status = 'concluido';
+    }
+
+    etapasValidadas.push({
+      nome: nome,
+      area: getVal(['ÁREA', 'área', 'area', 'Área']) || '',
+      responsavel: getVal(['ATRIBUÍDO PARA', 'atribuído para', 'atribuido para', 'Responsável', 'responsavel', 'Responsavel', 'Owner']) || '',
+      dataPrevista: dataPrevista,
+      dataReal: dataReal,
+      ordem: ordem,
+      codigo: String(getVal(['CODIGO', 'codigo', 'CÓDIGO', 'código']) || ''),
+      status: status,
+      executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por']) || ''
+    });
+  });
+
+  return etapasValidadas;
+};

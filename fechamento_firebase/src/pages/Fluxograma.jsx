@@ -236,6 +236,9 @@ export default function Fluxograma() {
   useEffect(() => {
     // Se tiver empresa selecionada, usa o Realtime Database (igual Etapas.jsx)
     if (empresaAtual) {
+      // Limpa etapas da empresa anterior para evitar "flash" de dados incorretos
+      setEtapas([]);
+
       const db = getDatabase();
       const googleTableRef = ref(db, `tenants/${empresaAtual.id}/tabelaGoogle`);
 

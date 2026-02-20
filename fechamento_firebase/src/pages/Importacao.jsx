@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
+import { getDatabase, ref, get } from 'firebase/database';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { getPeriodos, importarEtapas } from '../services/database';
@@ -42,6 +43,12 @@ export default function Importacao() {
   useEffect(() => {
     if (!empresaAtual) return;
     
+    // Limpa dados da empresa anterior para evitar mistura
+    setEmpresaDados(null);
+    setPreviewData([]);
+    setError('');
+    setSuccess('');
+
     // Busca dados atualizados da empresa no Firestore
     const db = getFirestore();
     const empresaRef = doc(db, 'tenants', empresaAtual.id);
@@ -129,9 +136,25 @@ export default function Importacao() {
         jsonData = XLSX.utils.sheet_to_json(worksheet, { raw: true });
       } catch (fetchError) {
         console.warn("Erro ao buscar planilha online:", fetchError);
-        if (dados.tabelaGoogle && Array.isArray(dados.tabelaGoogle) && dados.tabelaGoogle.length > 0) {
-          jsonData = dados.tabelaGoogle;
-          setError('⚠️ MODO OFFLINE: Usando dados da última sincronização (CACHE). As alterações recentes na planilha NÃO aparecerão até que a conexão seja restabelecida.');
+        
+        // Tenta buscar do Realtime Database (Cache)
+        const rtdb = getDatabase();
+        const snapshot = await get(ref(rtdb, `tenants/${dados.id}/tabelaGoogle`));
+        if (snapshot.exists()) {
+          jsonData = snapshot.val();
+          
+          // Verifica se os dados já estão processados (formato do cache)
+          // O cache tem chaves como 'nome', 'status', etc. A planilha bruta tem 'TAREFA', 'STATUS'.
+          const isCachedData = Array.isArray(jsonData) && jsonData.length > 0 && ('nome' in jsonData[0] || 'ordem' in jsonData[0]);
+
+          if (isCachedData) {
+             setPreviewData(jsonData);
+             setError('⚠️ MODO OFFLINE: Usando dados da última sincronização (CACHE). As alterações recentes na planilha NÃO aparecerão até que a conexão seja restabelecida.');
+             setLoading(false);
+             return;
+          }
+
+          setError('⚠️ MODO OFFLINE: Usando dados da última sincronização (CACHE).');
         } else {
           throw new Error('Não foi possível acessar a planilha. Verifique se ela está "Publicada na Web" ou sincronize manualmente na tela de Empresas.');
         }
@@ -297,7 +320,12 @@ export default function Importacao() {
           </div>
 
           <div>
-            <h4 className="text-sm font-medium text-slate-700 mb-3">Pré-visualização (Total: {previewData.length} registros)</h4>
+            <h4 className="text-sm font-medium text-slate-700 mb-3">
+              Pré-visualização (Total: {previewData.length} registros)
+              {(empresaDados?.spreadsheetId || empresaAtual?.spreadsheetId) && (
+                <span className="ml-2 text-xs text-slate-500 font-normal">ID: {empresaDados?.spreadsheetId || empresaAtual?.spreadsheetId}</span>
+              )}
+            </h4>
             <div className="overflow-x-auto border border-slate-200 rounded-lg max-h-[500px] overflow-y-auto custom-scrollbar">
               <table className="w-full text-sm text-left">
                 <thead className="bg-slate-50 text-slate-500 sticky top-0 shadow-sm z-10">
