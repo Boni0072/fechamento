@@ -10,15 +10,15 @@ import { checkPermission } from './permissionUtils';
 
 const PAGINAS_DISPONIVEIS = [
   { id: 'dashboard', label: 'Dashboard' },
-  { id: 'empresas', label: 'Empresas' },
-  { id: 'etapas', label: 'Etapas' },
-  { id: 'importacao', label: 'Importação' },
-  { id: 'relatorios', label: 'Relatórios' },
-  { id: 'historico', label: 'Histórico' },
-  { id: 'cadastros', label: 'Cadastros' },
-  { id: 'notificacoes', label: 'Notificações' },
-  { id: 'fluxograma', label: 'Fluxograma' },
-  { id: 'usuarios', label: 'Usuários' }
+  { id: 'Empresas', label: 'Empresas' },
+  { id: 'Etapas', label: 'Etapas' },
+  { id: 'Importacao', label: 'Importação' },
+  { id: 'Relatorios', label: 'Relatórios' },
+  { id: 'Historico', label: 'Histórico' },
+  { id: 'Cadastros', label: 'Cadastros' },
+  { id: 'Notificacoes', label: 'Notificações' },
+  { id: 'Fluxograma', label: 'Fluxograma' },
+  { id: 'Usuarios', label: 'Usuários' }
 ];
 
 // Função auxiliar para redimensionar imagem
@@ -179,6 +179,12 @@ const GerenciarUsuarios = () => {
     if (!empresaAtual?.id) return;
     setMensagem({ tipo: 'info', texto: modoEdicao ? 'Atualizando usuário...' : 'Criando usuário...' });
 
+    // Garante que paginasAcesso seja um array e tenha pelo menos 'dashboard' se vazio
+    let paginasAcessoFinal = Array.isArray(dados.paginasAcesso) ? dados.paginasAcesso : [];
+    if (paginasAcessoFinal.length === 0) {
+        paginasAcessoFinal = ['dashboard'];
+    }
+
     // Validação de senha (se fornecida)
     if (dados.senha) {
       const erroSenha = validarSenhaForte(dados.senha);
@@ -199,7 +205,7 @@ const GerenciarUsuarios = () => {
           telefone: dados.telefone,
           perfilAcesso: dados.perfilAcesso,
           avatar: avatarPreview,
-          paginasAcesso: dados.paginasAcesso
+          paginasAcesso: paginasAcessoFinal
         };
 
         // Se houver senha digitada, salva no banco (conforme comportamento anterior)
@@ -208,6 +214,15 @@ const GerenciarUsuarios = () => {
         }
 
         await updateDoc(usuarioRef, dadosAtualizacao);
+
+        // Atualiza também o diretório global para garantir o login e permissões
+        await setDoc(doc(db, 'users_directory', usuarioEditandoId), {
+          empresaId: empresaAtual.id,
+          email: dados.email,
+          perfilAcesso: dados.perfilAcesso,
+          paginasAcesso: paginasAcessoFinal
+        }, { merge: true });
+
         setMensagem({ tipo: 'sucesso', texto: 'Usuário atualizado com sucesso!' });
       } else {
         // Cria uma instância secundária para não deslogar o admin atual
@@ -227,7 +242,15 @@ const GerenciarUsuarios = () => {
             telefone: dados.telefone,
             perfilAcesso: dados.perfilAcesso,
             avatar: avatarPreview,
-            paginasAcesso: dados.paginasAcesso
+            paginasAcesso: paginasAcessoFinal
+          });
+
+          // Cria o vínculo no diretório global para permitir o login
+          await setDoc(doc(db, 'users_directory', user.uid), {
+            empresaId: empresaAtual.id,
+            email: dados.email,
+            perfilAcesso: dados.perfilAcesso,
+            paginasAcesso: paginasAcessoFinal
           });
           setMensagem({ tipo: 'sucesso', texto: 'Usuário criado com sucesso!' });
         } finally {

@@ -3,8 +3,8 @@ import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
 import { getDatabase, ref, onValue } from 'firebase/database';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
-import { getPeriodos, getEtapas, calcularIndicadores, getStatusLabel } from '../services/database';
-import { FileText, Download, BarChart3, Users, AlertTriangle, Building2 } from 'lucide-react';
+import { getPeriodos, getEtapas, getStatusLabel } from '../services/database';
+import { FileText, Download, BarChart3, Users, AlertTriangle, Building2, Clock } from 'lucide-react';
 import { format } from 'date-fns';
 import { checkPermission } from './permissionUtils';
 
@@ -133,15 +133,55 @@ export default function Relatorios() {
       const filteredSteps = allSteps.filter(etapa => {
           if (!etapa.dataPrevista) return false;
           const etapaDate = new Date(etapa.dataPrevista);
-          return etapaDate.getMonth() + 1 === periodoSelecionado.mes && etapaDate.getFullYear() === periodoSelecionado.ano;
+          return etapaDate.getMonth() + 1 === parseInt(periodoSelecionado.mes) && etapaDate.getFullYear() === parseInt(periodoSelecionado.ano);
       });
       setEtapas(filteredSteps);
-      setIndicadores(calcularIndicadores(filteredSteps));
+      setIndicadores(calcularIndicadoresLocal(filteredSteps)); // Use local function
     } else {
       setEtapas(allSteps);
-      setIndicadores(calcularIndicadores(allSteps));
+      setIndicadores(calcularIndicadoresLocal(allSteps)); // Use local function
     }
   }, [stepsByCompany, periodoSelecionado]);
+
+  const calcularIndicadoresLocal = (dados) => {
+    const total = dados.length;
+    const concluidas = dados.filter(e => e.status === 'concluido' || e.status === 'concluido_atraso').length;
+    const atrasadas = dados.filter(e => e.status === 'atrasado').length;
+    const concluidasComAtraso = dados.filter(e => e.status === 'concluido_atraso').length;
+    
+    // Cálculo de tempo médio de atraso
+    let somaDiasAtraso = 0;
+    let qtdAtrasoParaMedia = 0;
+    
+    dados.forEach(e => {
+      if (e.dataPrevista) {
+        const dPrev = new Date(e.dataPrevista);
+        dPrev.setHours(0,0,0,0);
+        
+        let dReal;
+        if (e.status === 'concluido' || e.status === 'concluido_atraso') {
+           if (e.dataReal) dReal = new Date(e.dataReal);
+        } else if (e.status === 'atrasado') {
+           dReal = new Date();
+        }
+
+        if (dReal) {
+            dReal.setHours(0,0,0,0);
+            if (dReal.getTime() > dPrev.getTime()) {
+                const diffTime = Math.abs(dReal.getTime() - dPrev.getTime());
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+                somaDiasAtraso += diffDays;
+                qtdAtrasoParaMedia++;
+            }
+        }
+      }
+    });
+
+    const tempoMedioAtraso = qtdAtrasoParaMedia > 0 ? Math.round(somaDiasAtraso / qtdAtrasoParaMedia) : 0;
+    const percentualConcluido = total > 0 ? Math.round((concluidas / total) * 100) : 0;
+
+    return { total, concluidas, atrasadas, concluidasComAtraso, tempoMedioAtraso, percentualConcluido };
+  };
 
   // Adiciona a função processData que está faltando neste arquivo
   const processData = (data) => {
@@ -160,7 +200,7 @@ export default function Relatorios() {
       if (typeof valor === 'string') {
         const v = valor.trim();
         
-        const dmy = v.match(/^(\d{1,2})\/\-\.\/\-\.(?:[\sT]+(\d{1,2}):(\d{2}))?/);
+        const dmy = v.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})(?:[\sT]+(\d{1,2}):(\d{2}))?/);
         if (dmy) {
           const dia = parseInt(dmy[1], 10);
           const mes = parseInt(dmy[2], 10);
@@ -181,7 +221,7 @@ export default function Relatorios() {
           }
         }
   
-        const ymd = v.match(/^(\d{4})\/\-\.\/\-\.(?:[\sT]+(\d{1,2}):(\d{2}))?/);
+        const ymd = v.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})(?:[\sT]+(\d{1,2}):(\d{2}))?/);
         if (ymd) {
            const ano = parseInt(ymd[1], 10);
            const mes = parseInt(ymd[2], 10);
@@ -201,6 +241,43 @@ export default function Relatorios() {
       return null;
     };
   
+    const combinarDataHora = (dataISO, horaVal) => {
+      if (!dataISO) return null;
+      if (horaVal === undefined || horaVal === null || String(horaVal).trim() === '') return dataISO;
+      
+      const dt = new Date(dataISO);
+      const year = dt.getUTCFullYear();
+      const month = dt.getUTCMonth();
+      const day = dt.getUTCDate();
+  
+      let hours = 0;
+      let minutes = 0;
+  
+      if (typeof horaVal === 'number') {
+        const totalSeconds = Math.round(horaVal * 86400);
+        hours = Math.floor(totalSeconds / 3600) % 24;
+        minutes = Math.floor((totalSeconds % 3600) / 60);
+      } else if (typeof horaVal === 'string') {
+        const v = horaVal.trim();
+        if (v.includes('T') || v.includes('-') || v.includes('/')) {
+          const timeDate = new Date(v);
+          if (!isNaN(timeDate.getTime())) {
+            hours = v.toUpperCase().includes('Z') ? timeDate.getUTCHours() : timeDate.getHours();
+            minutes = v.toUpperCase().includes('Z') ? timeDate.getUTCMinutes() : timeDate.getMinutes();
+          }
+        } else {
+          const parts = v.split(':');
+          if (parts.length >= 2) {
+            hours = parseInt(parts[0], 10) || 0;
+            minutes = parseInt(parts[1], 10) || 0;
+          }
+        }
+      }
+      
+      const localDate = new Date(year, month, day, hours, minutes, 0, 0);
+      return localDate.toISOString();
+    };
+
     data.forEach((row) => {
       const getVal = (keys) => {
         const normalize = (k) => k ? String(k).toLowerCase().replace(/\s+/g, ' ').trim() : '';
@@ -218,16 +295,58 @@ export default function Relatorios() {
         return undefined;
       };
   
-      const nome = getVal(['TAREFA', 'tarefa', 'Nome', 'nome', 'Etapa', 'etapa']);
+      const nome = getVal(['TAREFA', 'tarefa', 'Nome', 'nome', 'Etapa', 'etapa', 'Etapas', 'etapas', 'Tarefas', 'tarefas', 'Atividade', 'atividade', 'Descrição', 'descricao', 'Item', 'item']);
       if (!nome) return;
   
+      let dataPrevista = formatarData(getVal(['INÍCIO', 'início', 'inicio', 'Data Prevista', 'dataPrevista', 'Data de Início', 'Data de Inicio', 'Previsão', 'Previsao', 'Data', 'Date', 'Start', 'Planejado', 'Data Planejada', 'Início Previsto', 'Inicio Previsto']));
+      const horaInicio = getVal(['HORA INICIO', 'Hora Inicio', 'hora inicio', 'Hora Início']);
+      dataPrevista = combinarDataHora(dataPrevista, horaInicio);
+
+      let dataReal = formatarData(getVal(['TÉRMINO', 'término', 'termino', 'Data Real', 'dataReal', 'Data Conclusão', 'Data Conclusao', 'Conclusão', 'Conclusao', 'Realizado', 'Executado', 'Fim', 'Data de Término', 'Data de Termino', 'Data Fim', 'Data Final', 'End', 'Término Real', 'Termino Real']));
+      const horaTermino = getVal(['HORA TÉRMINO', 'Hora Término', 'hora término', 'HORA TERMICA', 'Hora Termica']);
+      dataReal = combinarDataHora(dataReal, horaTermino);
+
+      // Lógica de Status Corrigida (Igual ao Dashboard)
+      let status = 'pendente';
+      const now = new Date();
+
+      let rawStatus = getVal(['STATUS', 'Status', 'status', 'SITUAÇÃO', 'Situação', 'situacao', 'Estado', 'estado']);
+      
+      if (rawStatus) {
+         const s = String(rawStatus).toLowerCase();
+         if (s.includes('conclu')) {
+             status = 'concluido';
+             if (dataReal && dataPrevista && new Date(dataReal) > new Date(dataPrevista)) {
+                 status = 'concluido_atraso';
+             }
+         }
+         else if (s.includes('atras')) status = 'atrasado';
+         else if (s.includes('andamento')) status = 'em_andamento';
+         else status = 'pendente';
+      } else {
+         if (dataReal) {
+             status = 'concluido';
+             if (dataPrevista && new Date(dataReal) > new Date(dataPrevista)) {
+                 status = 'concluido_atraso';
+             }
+         } else {
+             if (dataPrevista && new Date(dataPrevista) < now) {
+                 status = 'atrasado';
+             } else {
+                 status = 'pendente';
+             }
+         }
+      }
+
       etapasValidadas.push({
         ...row, // Keep original data
         nome: nome,
         area: getVal(['ÁREA', 'área', 'area']) || '',
         responsavel: getVal(['ATRIBUÍDO PARA', 'atribuído para', 'Responsável', 'responsavel']) || '',
-        dataPrevista: formatarData(getVal(['INÍCIO', 'início', 'Data Prevista', 'dataPrevista'])),
-        dataReal: formatarData(getVal(['TÉRMINO', 'término', 'Data Real', 'dataReal'])),
+        dataPrevista: dataPrevista,
+        dataReal: dataReal,
+        status: status,
+        observacoes: getVal(['Observações', 'observacoes', 'Observação', 'observação', 'Observacao', 'observacao', 'Obs', 'obs', 'Comentários', 'comentarios']) || ''
       });
     });
   
@@ -352,6 +471,7 @@ export default function Relatorios() {
       <div className="flex gap-2 mb-6 border-b border-slate-200">
         <TabButton active={tab === 'resumo'} onClick={() => setTab('resumo')} icon={<FileText className="w-4 h-4" />} label="Resumo" />
         <TabButton active={tab === 'atrasadas'} onClick={() => setTab('atrasadas')} icon={<AlertTriangle className="w-4 h-4" />} label="Atrasadas" />
+        <TabButton active={tab === 'concluidas_atraso'} onClick={() => setTab('concluidas_atraso')} icon={<Clock className="w-4 h-4" />} label="Concluídas c/ Atraso" />
         <TabButton active={tab === 'areas'} onClick={() => setTab('areas')} icon={<BarChart3 className="w-4 h-4" />} label="Por Área" />
         <TabButton active={tab === 'responsaveis'} onClick={() => setTab('responsaveis')} icon={<Users className="w-4 h-4" />} label="Responsáveis" />
         {viewAllCompanies && <TabButton active={tab === 'empresas'} onClick={() => setTab('empresas')} icon={<Building2 className="w-4 h-4" />} label="Por Empresa" />}
@@ -403,6 +523,41 @@ export default function Relatorios() {
                       {getStatusLabel(etapa.status)}
                     </span>
                   </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'concluidas_atraso' && (
+        <div className="bg-white rounded-xl shadow-sm p-6">
+          <h2 className="text-lg font-semibold text-slate-800 mb-4">Etapas Concluídas com Atraso</h2>
+          
+          {etapas.filter(e => e.status === 'concluido_atraso').length === 0 ? (
+            <p className="text-slate-500 text-center py-8">Nenhuma etapa concluída com atraso</p>
+          ) : (
+            <div className="space-y-2">
+              {etapas.filter(e => e.status === 'concluido_atraso').map(etapa => (
+                <div key={etapa.id} className="p-4 bg-orange-50 rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <div>
+                      <p className="font-medium text-slate-800">{etapa.nome}</p>
+                      <p className="text-sm text-slate-500">{etapa.responsavel || 'Sem responsável'}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm text-slate-600">
+                        Prevista: {etapa.dataPrevista ? format(new Date(etapa.dataPrevista), 'dd/MM') : '-'} | 
+                        Real: {etapa.dataReal ? format(new Date(etapa.dataReal), 'dd/MM') : '-'}
+                      </p>
+                      <span className="text-xs px-2 py-1 rounded-full bg-orange-500 text-white">
+                        Concluído com Atraso
+                      </span>
+                    </div>
+                  </div>
+                  {etapa.observacoes && (
+                    <p className="text-sm text-slate-600 mt-2 border-t border-orange-200 pt-2"><strong>Observação:</strong> {etapa.observacoes}</p>
+                  )}
                 </div>
               ))}
             </div>

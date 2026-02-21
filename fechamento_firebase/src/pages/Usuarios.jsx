@@ -153,6 +153,12 @@ export default function Usuarios() {
     if (!empresaAtual?.id) return;
     setMensagem({ tipo: 'info', texto: modoEdicao ? 'Atualizando usuário...' : 'Criando usuário...' });
 
+    // Garante que paginasAcesso seja um array e tenha pelo menos 'dashboard' se vazio
+    let paginasAcessoFinal = Array.isArray(dados.paginasAcesso) ? dados.paginasAcesso : [];
+    if (paginasAcessoFinal.length === 0) {
+        paginasAcessoFinal = ['dashboard'];
+    }
+
     if (dados.senha) {
       const erroSenha = validarSenhaForte(dados.senha);
       if (erroSenha) {
@@ -172,7 +178,7 @@ export default function Usuarios() {
           telefone: dados.telefone,
           perfilAcesso: dados.perfilAcesso,
           avatar: avatarPreview,
-          paginasAcesso: dados.paginasAcesso
+          paginasAcesso: paginasAcessoFinal
         };
 
         if (dados.senha) {
@@ -180,6 +186,15 @@ export default function Usuarios() {
         }
 
         await updateDoc(usuarioRef, dadosAtualizacao);
+        
+        // Atualiza também o diretório global para garantir o login e permissões
+        await setDoc(doc(db, 'users_directory', usuarioEditandoId), {
+          empresaId: empresaAtual.id,
+          email: dados.email,
+          perfilAcesso: dados.perfilAcesso,
+          paginasAcesso: paginasAcessoFinal
+        }, { merge: true });
+
         setMensagem({ tipo: 'sucesso', texto: 'Usuário atualizado com sucesso!' });
       } else {
         const app = getApp();
@@ -203,7 +218,7 @@ export default function Usuarios() {
             telefone: dados.telefone,
             perfilAcesso: dados.perfilAcesso,
             avatar: avatarPreview,
-            paginasAcesso: dados.paginasAcesso,
+            paginasAcesso: paginasAcessoFinal,
             createdAt: new Date().toISOString()
           });
           
@@ -211,7 +226,8 @@ export default function Usuarios() {
           await setDoc(doc(db, 'users_directory', user.uid), {
             empresaId: empresaAtual.id,
             email: dados.email,
-            perfilAcesso: dados.perfilAcesso
+            perfilAcesso: dados.perfilAcesso,
+            paginasAcesso: paginasAcessoFinal
           });
 
           setMensagem({ tipo: 'sucesso', texto: 'Usuário criado com sucesso!' });

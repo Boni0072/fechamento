@@ -181,7 +181,8 @@ export default function Login() {
       await setDoc(doc(db, 'users_directory', newUser.uid), {
         empresaId: empresaId,
         email: newClientData.emailUser,
-        perfilAcesso: 'Master'
+        perfilAcesso: 'Master',
+        paginasAcesso: ['dashboard', 'empresas', 'etapas', 'importacao', 'relatorios', 'historico', 'cadastros', 'notificacoes', 'fluxograma', 'usuarios']
       });
 
       alert(`Cliente "${newClientData.nomeEmpresa}" criado com sucesso!\nUsuário: ${newClientData.emailUser}`);

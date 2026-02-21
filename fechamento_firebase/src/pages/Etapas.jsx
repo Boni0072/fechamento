@@ -521,7 +521,7 @@ export default function Etapas() {
               </tr>
             ) : (
               etapasFiltradas.map((etapa, index) => (
-                <tr key={etapa.id} className="hover:bg-slate-50">
+                <tr key={etapa.id || `etapa-${index}`} className="hover:bg-slate-50">
                   <td className="px-4 py-3 text-sm font-medium text-slate-800">
                     D+{etapa.ordem || index}
                   </td>
