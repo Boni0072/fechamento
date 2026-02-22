@@ -4,7 +4,8 @@ import { getAuth, createUserWithEmailAndPassword, sendPasswordResetEmail } from 
 import { getFirestore, collection, doc, updateDoc, deleteDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
-import { Users, User, Plus, Pencil, Trash2, Eye, EyeOff, Camera, Mail, Shield, X } from 'lucide-react';
+import { Users, User, Plus, Pencil, Trash2, Eye, EyeOff, Camera, Mail, Shield, X, Download, Upload } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 const PAGINAS_DISPONIVEIS = [
   { id: 'dashboard', label: 'Dashboard' },
@@ -330,6 +331,121 @@ export default function Usuarios() {
     }
   };
 
+  const handleDownloadTemplate = () => {
+    const headers = ['Nome', 'Email', 'Cargo', 'Telefone', 'Perfil (Usuário/Gerente/Admin)', 'Senha Provisória', 'Empresas (IDs)', 'Páginas (IDs)'];
+    const exampleRow = ['João Silva', 'joao@empresa.com', 'Analista', '(11) 99999-9999', 'Usuário', 'mudar123', 'empresa_id_1,empresa_id_2', 'dashboard,empresas'];
+
+    const ws = XLSX.utils.aoa_to_sheet([headers, exampleRow]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Template Usuários");
+
+    // Aba de referência para IDs
+    if (empresas && PAGINAS_DISPONIVEIS) {
+      const refHeaders = ['ID da Página', 'Nome da Página', '', 'ID da Empresa', 'Nome da Empresa'];
+      const refRows = [];
+      const maxLen = Math.max(PAGINAS_DISPONIVEIS.length, empresas.length);
+      
+      for(let i=0; i<maxLen; i++) {
+        const page = PAGINAS_DISPONIVEIS[i];
+        const emp = empresas[i];
+        refRows.push([
+          page?.id || '', page?.label || '',
+          '',
+          emp?.id || '', emp?.nome || ''
+        ]);
+      }
+      const wsRef = XLSX.utils.aoa_to_sheet([refHeaders, ...refRows]);
+      XLSX.utils.book_append_sheet(wb, wsRef, "IDs de Referência");
+    }
+
+    XLSX.writeFile(wb, "template_importacao_usuarios.xlsx");
+  };
+
+  const handleImportarUsuarios = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!empresaAtual?.id) {
+      setMensagem({ tipo: 'erro', texto: 'Nenhuma empresa selecionada.' });
+      return;
+    }
+
+    setLoading(true);
+    setMensagem({ tipo: 'info', texto: 'Processando arquivo...' });
+
+    try {
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data);
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+      if (jsonData.length === 0) throw new Error('A planilha está vazia.');
+
+      // Inicializa app secundário para criar usuários sem deslogar o admin
+      const app = getApp();
+      let secondaryApp;
+      try {
+        secondaryApp = getApp('SecondaryApp');
+      } catch (e) {
+        secondaryApp = initializeApp(app.options, 'SecondaryApp');
+      }
+      const secondaryAuth = getAuth(secondaryApp);
+      const db = getFirestore();
+
+      let sucessos = 0;
+      let erros = 0;
+
+      for (const row of jsonData) {
+        try {
+          const email = row['Email'];
+          const senha = row['Senha Provisória'];
+          if (!email || !senha) continue;
+
+          const userCredential = await createUserWithEmailAndPassword(secondaryAuth, email, String(senha));
+          const user = userCredential.user;
+
+          const empresasIds = row['Empresas (IDs)'] ? String(row['Empresas (IDs)']).split(',').map(s => s.trim()) : [empresaAtual.id];
+          const paginasIds = row['Páginas (IDs)'] ? String(row['Páginas (IDs)']).split(',').map(s => s.trim()) : ['dashboard'];
+          
+          const perfilRaw = row['Perfil (Usuário/Gerente/Admin)'];
+          let perfilAcesso = 'Usuário';
+          if (perfilRaw && String(perfilRaw).toLowerCase().includes('admin')) perfilAcesso = 'Admin';
+          if (perfilRaw && String(perfilRaw).toLowerCase().includes('gerente')) perfilAcesso = 'Gerente';
+
+          const userData = {
+            nome: row['Nome'] || '',
+            email,
+            cargo: row['Cargo'] || '',
+            telefone: row['Telefone'] || '',
+            perfilAcesso,
+            paginasAcesso: paginasIds,
+            empresasAcesso: empresasIds,
+            createdAt: new Date().toISOString()
+          };
+
+          for (const empId of empresasIds) {
+            await setDoc(doc(db, 'tenants', empId, 'usuarios', user.uid), userData);
+          }
+          await setDoc(doc(db, 'users_directory', user.uid), { ...userData, empresaId: empresasIds[0] });
+          
+          sucessos++;
+        } catch (err) {
+          console.error("Erro na linha:", row, err);
+          erros++;
+        }
+      }
+      
+      // Não deletamos o app secundário aqui para evitar erros de re-inicialização rápida, 
+      // mas em produção idealmente gerenciaria o ciclo de vida ou reutilizaria.
+      setMensagem({ tipo: erros === 0 ? 'sucesso' : 'info', texto: `Importação: ${sucessos} criados, ${erros} falhas.` });
+    } catch (err) {
+      setMensagem({ tipo: 'erro', texto: err.message });
+    } finally {
+      setLoading(false);
+      e.target.value = '';
+    }
+  };
+
   const limparFormulario = () => {
     setDados({
       nome: '',
@@ -373,16 +489,30 @@ export default function Usuarios() {
           </div>
         </div>
         
-        <button
-          onClick={() => {
-            limparFormulario();
-            setExibirModal(true);
-          }}
-          className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors shadow-sm"
-        >
-          <Plus className="w-5 h-5" />
-          Adicionar Usuário
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={handleDownloadTemplate}
+            className="flex items-center gap-2 px-4 py-2 border border-slate-200 bg-white rounded-lg hover:bg-slate-50 text-slate-600 transition-colors shadow-sm"
+          >
+            <Download className="w-5 h-5" />
+            Baixar Modelo
+          </button>
+          <label className="flex items-center gap-2 px-4 py-2 border border-slate-200 bg-white rounded-lg hover:bg-slate-50 text-slate-600 transition-colors shadow-sm cursor-pointer">
+            <Upload className="w-5 h-5" />
+            Importar
+            <input type="file" className="hidden" accept=".xlsx, .xls" onChange={handleImportarUsuarios} disabled={loading} />
+          </label>
+          <button
+            onClick={() => {
+              limparFormulario();
+              setExibirModal(true);
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors shadow-sm"
+          >
+            <Plus className="w-5 h-5" />
+            Adicionar Usuário
+          </button>
+        </div>
       </div>
 
       {mensagem.texto && (
