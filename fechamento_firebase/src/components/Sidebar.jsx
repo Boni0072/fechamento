@@ -17,7 +17,6 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useState, useEffect } from 'react';
-import { getDatabase, ref, onValue } from 'firebase/database';
 import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
 import { usePermissao } from '../hooks/usePermissao';
 import { routesMetadata } from '../routesConstants';
@@ -76,7 +75,6 @@ const MenuItem = ({ item, collapsed, theme }) => {
 export default function Sidebar() {
   const { user, logout, empresaAtual, empresas, selecionarEmpresa } = useAuth();
   const [showEmpresas, setShowEmpresas] = useState(false);
-  const [dbUser, setDbUser] = useState(null);
   const [collapsed, setCollapsed] = useState(false);
   const [imgError, setImgError] = useState(false);
   const [logo, setLogo] = useState('/hunterDouglas.png');
@@ -129,21 +127,8 @@ export default function Sidebar() {
     return () => unsubscribe();
   }, [empresaAtual?.id]);
 
-  useEffect(() => {
-    setDbUser(null);
-    setImgError(false);
-    if (user?.uid && empresaAtual?.id) {
-      const db = getDatabase();
-      const userRef = ref(db, `tenants/${empresaAtual.id}/usuarios/${user.uid}`);
-      const unsubscribe = onValue(userRef, (snapshot) => {
-        setDbUser(snapshot.val());
-      });
-      return () => unsubscribe();
-    }
-  }, [user?.uid, empresaAtual?.id]);
-
-  const nomeExibicao = dbUser?.nome || user?.displayName || user?.email || 'Usuário';
-  const avatarUrl = dbUser?.avatar || user?.photoURL;
+  const nomeExibicao = user?.nome || user?.name || user?.displayName || user?.email || 'Usuário';
+  const avatarUrl = user?.avatar || user?.photoURL;
 
   const handleSelecao = (empresa) => {
     // Ao passar null, o AuthContext limpa a empresa atual, 
