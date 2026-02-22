@@ -945,7 +945,7 @@ function processData(data, existingSteps = []) {
       dataReal: dataReal,
       ordem: ordem,
       codigo: (codigo !== undefined && codigo !== null) ? String(codigo) : '',
-      observacoes: getVal(['Observações', 'observacoes']) || '',
+      observacoes: getVal(['Observações', 'observacoes', 'Observação', 'observação', 'Observacao', 'observacao', 'OBSERVAÇÃO', 'Obs', 'obs']) || '',
       status: status,
       concluidoEm: concluidoEm || null,
       quemConcluiu: quemConcluiu || null,

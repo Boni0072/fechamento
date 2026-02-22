@@ -206,36 +206,77 @@ const processData = (data, existingSteps) => {
   const etapasValidadas = [];
 
   const formatarData = (valor) => {
-    if (!valor) return null;
+    if (valor === null || valor === undefined || String(valor).trim() === '') return null;
+
     if (typeof valor === 'number') {
-      const date = new Date((valor - 25569 + 0.5) * 86400 * 1000);
+      const valorAjustado = Math.floor(valor + 0.001);
+      const date = new Date((valorAjustado - 25569) * 86400 * 1000 + 43200000);
       return date.toISOString();
     }
+    
     if (typeof valor === 'string') {
       const v = valor.trim();
-      if (v.length > 0 && !isNaN(v) && !v.includes('/') && !v.includes('-') && !v.includes(':')) {
-        const num = parseFloat(v);
-        const date = new Date((num - 25569 + 0.5) * 86400 * 1000);
-        return date.toISOString();
-      }
-      if (/^\d{1,2}[\/-]\d{1,2}[\/-]\d{4}$/.test(v)) {
-        const parts = v.split(/[\/-]/);
-        const p1 = parseInt(parts[0], 10);
-        const p2 = parseInt(parts[1], 10);
-        const ano = parseInt(parts[2], 10);
-        let dia, mes;
-        // Lógica de data ambígua: Prioriza MM/DD/YYYY conforme solicitado
-        if (p1 > 12) { dia = p1; mes = p2; }
-        else if (p2 > 12) { mes = p1; dia = p2; }
-        else { mes = p1; dia = p2; } 
+      
+      // Formato DD/MM/AAAA HH:mm
+      const dmy = v.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})(?:[\sT]+(\d{1,2}):(\d{2}))?/);
+      if (dmy) {
+        const dia = parseInt(dmy[1], 10);
+        const mes = parseInt(dmy[2], 10);
+        let ano = parseInt(dmy[3], 10);
+        const hora = dmy[4] ? parseInt(dmy[4], 10) : null;
+        const min = dmy[5] ? parseInt(dmy[5], 10) : null;
         
-        const d = new Date(ano, mes - 1, dia);
-        if (isNaN(d) || d.getDate() !== dia || d.getMonth() !== mes - 1 || d.getFullYear() !== ano) return null;
-        return `${ano}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}T12:00:00.000Z`;
+        if (ano < 100) ano += 2000;
+
+        if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) {
+             if (hora !== null) {
+               const date = new Date(ano, mes - 1, dia, hora, min || 0, 0);
+               if (!isNaN(date.getTime())) return date.toISOString();
+             } else {
+               const date = new Date(Date.UTC(ano, mes - 1, dia, 12, 0, 0));
+               if (!isNaN(date.getTime())) return date.toISOString();
+             }
+        }
       }
-      if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return `${v}T12:00:00.000Z`;
     }
     return null;
+  };
+
+  const combinarDataHora = (dataISO, horaVal) => {
+    if (!dataISO) return null;
+    if (horaVal === undefined || horaVal === null || String(horaVal).trim() === '') return dataISO;
+    
+    const dt = new Date(dataISO);
+    const year = dt.getUTCFullYear();
+    const month = dt.getUTCMonth();
+    const day = dt.getUTCDate();
+
+    let hours = 0;
+    let minutes = 0;
+
+    if (typeof horaVal === 'number') {
+      const totalSeconds = Math.round(horaVal * 86400);
+      hours = Math.floor(totalSeconds / 3600) % 24;
+      minutes = Math.floor((totalSeconds % 3600) / 60);
+    } else if (typeof horaVal === 'string') {
+      const v = horaVal.trim();
+      if (v.includes('T') || v.includes('-') || v.includes('/')) {
+        const timeDate = new Date(v);
+        if (!isNaN(timeDate.getTime())) {
+          hours = v.toUpperCase().includes('Z') ? timeDate.getUTCHours() : timeDate.getHours();
+          minutes = v.toUpperCase().includes('Z') ? timeDate.getUTCMinutes() : timeDate.getMinutes();
+        }
+      } else {
+        const parts = v.split(':');
+        if (parts.length >= 2) {
+          hours = parseInt(parts[0], 10) || 0;
+          minutes = parseInt(parts[1], 10) || 0;
+        }
+      }
+    }
+    
+    const localDate = new Date(year, month, day, hours, minutes, 0, 0);
+    return localDate.toISOString();
   };
 
   data.forEach((row, index) => {
@@ -269,7 +310,9 @@ const processData = (data, existingSteps) => {
     }
     if (isNaN(ordem)) ordem = index + 1;
 
-    const dataPrevista = formatarData(getVal(['Data Prevista', 'dataPrevista', 'INÍCIO', 'início', 'inicio', 'Previsão', 'Previsao', 'Data', 'Date']));
+    let dataPrevista = formatarData(getVal(['Data Prevista', 'dataPrevista', 'INÍCIO', 'início', 'inicio', 'Previsão', 'Previsao', 'Data', 'Date']));
+    const horaInicio = getVal(['HORA INICIO', 'Hora Inicio', 'hora inicio', 'Hora Início']);
+    dataPrevista = combinarDataHora(dataPrevista, horaInicio);
     
     let rawDataReal = getVal(['Início (Debug)', 'Inicio (Debug)', 'Início(Debug)', 'Inicio(Debug)', 'inicio (debug)', 'inicio debug', 'Inicio Debug', 'Debug', 'Data Real', 'dataReal', 'Data Conclusão', 'Data Conclusao', 'Conclusão', 'Conclusao', 'Realizado', 'Executado', 'Fim', 'TÉRMINO', 'término', 'termino']);
     
@@ -279,6 +322,8 @@ const processData = (data, existingSteps) => {
     }
 
     let dataReal = formatarData(rawDataReal);
+    const horaTermino = getVal(['HORA TÉRMINO', 'Hora Término', 'hora término', 'HORA TERMICA', 'Hora Termica']);
+    dataReal = combinarDataHora(dataReal, horaTermino);
     
     let rawStatus = getVal(['STATUS', 'Status', 'status', 'SITUAÇÃO', 'Situação', 'situacao', 'Estado', 'estado']);
     
@@ -325,10 +370,11 @@ const processData = (data, existingSteps) => {
       dataReal: dataReal,
       ordem: ordem,
       codigo: (codigo !== undefined && codigo !== null) ? codigo : '',
-      observacoes: getVal(['Observações', 'observacoes', 'CODIGO', 'codigo']) || '',
+      observacoes: getVal(['Observações', 'observacoes', 'Observação', 'observação', 'Observacao', 'observacao', 'OBSERVAÇÃO', 'Obs', 'obs', 'Comentários', 'comentarios']) || '',
       status: status,
       concluidoEm: concluidoEm || null,
-      quemConcluiu: quemConcluiu || null
+      quemConcluiu: quemConcluiu || null,
+      executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPor', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || ''
     });
   });
 
