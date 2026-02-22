@@ -9,7 +9,7 @@ import { checkPermission } from './permissionUtils';
 
 export default function Notificacoes() {
   const { empresaAtual, empresas } = useAuth();
-  const { loading: loadingPermissoes, user: authUser } = usePermissao('notificacoes');
+  const { loading: loadingPermissoes, user: authUser, autorizado } = usePermissao('notificacoes');
   const [userProfile, setUserProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [periodos, setPeriodos] = useState([]);
@@ -52,8 +52,6 @@ export default function Notificacoes() {
     }
   }, [authUser, empresaAtual]);
 
-  // Restrição removida temporariamente
-  const autorizado = true;
 
   useEffect(() => {
     if (!empresasParaBuscar || empresasParaBuscar.length === 0) {

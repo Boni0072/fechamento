@@ -9,8 +9,14 @@ export function usePermissao(pagina) {
   useEffect(() => {
     if (!authLoading) {
       if (user) {
-        const isAuthorized = user.perfilAcesso === 'Admin' || 
-                             (pagina && Object.values(user.paginasAcesso || {}).includes(pagina));
+        // Normaliza lista de páginas (garante array)
+        const paginasUser = Array.isArray(user.paginasAcesso) ? user.paginasAcesso : Object.values(user.paginasAcesso || {});
+        
+        // Verifica: Master OU Admin OU se a página está na lista (ignorando case)
+        const isAuthorized = user.perfilAcesso === 'Master' || 
+                             user.perfilAcesso === 'Admin' || 
+                             (pagina && paginasUser.some(p => String(p).toLowerCase() === String(pagina).toLowerCase()));
+                             
         setAutorizado(isAuthorized);
       } else {
         setAutorizado(false);

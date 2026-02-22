@@ -13,7 +13,7 @@ import { Plus, Trash2, Calendar, Users, FolderTree, FileText } from 'lucide-reac
 
 export default function Cadastros() {
   const { empresaAtual } = useAuth();
-  const { loading: loadingPermissoes, user: authUser } = usePermissao('cadastros');
+  const { loading: loadingPermissoes, user: authUser, autorizado } = usePermissao('cadastros');
   const [userProfile, setUserProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [tab, setTab] = useState('periodos');
@@ -38,7 +38,6 @@ export default function Cadastros() {
     }
   }, [authUser, empresaAtual]);
 
-  const autorizado = true;
 
   useEffect(() => {
     if (!empresaAtual) return;

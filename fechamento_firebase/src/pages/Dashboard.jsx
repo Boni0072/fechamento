@@ -18,7 +18,7 @@ const processRealtimeData = (data) => {
 export default function Dashboard() {
   const navigate = useNavigate();
   const { empresaAtual, empresas, selecionarEmpresa } = useAuth();
-  const { loading: loadingPermissoes, user: authUser } = usePermissao('dashboard');
+  const { loading: loadingPermissoes, user: authUser, autorizado } = usePermissao('dashboard');
   const [userProfile, setUserProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
 
@@ -541,8 +541,7 @@ export default function Dashboard() {
     );
   }
 
-  // Restrição removida
-  const autorizado = true;
+  if (!autorizado) return <div className="flex flex-col items-center justify-center h-96"><p className="text-slate-500">Acesso não autorizado.</p></div>;
 
   return (
     <div className="animate-fadeIn">

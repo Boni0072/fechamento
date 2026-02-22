@@ -12,7 +12,7 @@ import { getDatabase, ref, onValue } from "firebase/database";
 export default function Etapas() {
   const navigate = useNavigate();
   const { empresaAtual, empresas, selecionarEmpresa } = useAuth();
-  const { loading: loadingPermissoes, user: authUser } = usePermissao('etapas');
+  const { loading: loadingPermissoes, user: authUser, autorizado } = usePermissao('etapas');
   const [userProfile, setUserProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [periodos, setPeriodos] = useState([]);
@@ -63,8 +63,7 @@ export default function Etapas() {
     }
   }, [authUser, empresaAtual]);
 
-  // Restrição removida
-  const autorizado = true;
+  if (!autorizado && !loadingPermissoes && !loadingProfile) return <div className="flex justify-center p-8 text-slate-500">Acesso não autorizado.</div>;
 
   useEffect(() => {
     if (!empresasParaBuscar || empresasParaBuscar.length === 0) return;

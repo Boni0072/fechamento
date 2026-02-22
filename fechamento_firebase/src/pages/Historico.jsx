@@ -10,7 +10,7 @@ import { checkPermission } from './permissionUtils';
 
 export default function Historico() {
   const { empresaAtual, empresas } = useAuth();
-  const { loading: loadingPermissoes, user: authUser } = usePermissao('historico');
+  const { loading: loadingPermissoes, user: authUser, autorizado } = usePermissao('historico');
   const [userProfile, setUserProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [historico, setHistorico] = useState([]);
@@ -36,8 +36,6 @@ export default function Historico() {
     }
   }, [authUser, empresaAtual]);
   
-  // Restrição removida
-  const autorizado = true;
 
   useEffect(() => {
     if (!empresasParaBuscar || empresasParaBuscar.length === 0) {

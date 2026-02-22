@@ -10,7 +10,7 @@ import { checkPermission } from './permissionUtils';
 
 export default function Importacao() {
   const { empresaAtual, empresas, selecionarEmpresa } = useAuth();
-  const { loading: loadingPermissoes, user: authUser } = usePermissao('importacao');
+  const { loading: loadingPermissoes, user: authUser, autorizado } = usePermissao('importacao');
   const [userProfile, setUserProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   
@@ -37,8 +37,6 @@ export default function Importacao() {
     }
   }, [authUser, empresaAtual]);
 
-  // Restrição removida
-  const autorizado = true;
 
   useEffect(() => {
     if (!empresaAtual) return;

@@ -37,8 +37,17 @@ const menuItems = [
 
 const MenuItem = ({ item, collapsed, theme }) => {
   const meta = routesMetadata.find(r => r.path === item.path);
-  const pageId = meta?.requiredPage;
+  let pageId = meta?.requiredPage;
+
+  // Fallback: se não encontrar metadata, tenta deduzir pelo path (ex: '/etapas' -> 'etapas')
+  if (!pageId) {
+    pageId = item.path === '/' ? 'dashboard' : item.path.replace('/', '').toLowerCase();
+  }
+
   const { loading, autorizado } = usePermissao(pageId);
+
+  if (loading) return null;
+  if (!autorizado) return null;
 
   return (
     <li>

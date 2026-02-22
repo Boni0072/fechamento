@@ -9,7 +9,7 @@ import * as XLSX from 'xlsx';
 
 export default function Empresas() {
   const { empresas, empresaAtual, selecionarEmpresa, criarEmpresa, user } = useAuth();
-  const { loading: loadingPermissoes, user: authUser } = usePermissao('empresas');
+  const { loading: loadingPermissoes, user: authUser, autorizado } = usePermissao('empresas');
   const [userProfile, setUserProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
 
@@ -29,9 +29,6 @@ export default function Empresas() {
     }
   }, [authUser, empresaAtual]);
 
-  // Se não tem empresa selecionada, permite acesso para selecionar. Se tem, verifica permissão.
-  // Restrição removida
-  const autorizado = true;
 
   const [showModal, setShowModal] = useState(false);
   const [nome, setNome] = useState('');

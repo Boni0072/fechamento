@@ -10,15 +10,15 @@ import { checkPermission } from './permissionUtils';
 
 const PAGINAS_DISPONIVEIS = [
   { id: 'dashboard', label: 'Dashboard' },
-  { id: 'Empresas', label: 'Empresas' },
-  { id: 'Etapas', label: 'Etapas' },
-  { id: 'Importacao', label: 'Importação' },
-  { id: 'Relatorios', label: 'Relatórios' },
-  { id: 'Historico', label: 'Histórico' },
-  { id: 'Cadastros', label: 'Cadastros' },
-  { id: 'Notificacoes', label: 'Notificações' },
-  { id: 'Fluxograma', label: 'Fluxograma' },
-  { id: 'Usuarios', label: 'Usuários' }
+  { id: 'empresas', label: 'Empresas' },
+  { id: 'etapas', label: 'Etapas' },
+  { id: 'importacao', label: 'Importação' },
+  { id: 'relatorios', label: 'Relatórios' },
+  { id: 'historico', label: 'Histórico' },
+  { id: 'cadastros', label: 'Cadastros' },
+  { id: 'notificacoes', label: 'Notificações' },
+  { id: 'fluxograma', label: 'Fluxograma' },
+  { id: 'usuarios', label: 'Usuários' }
 ];
 
 // Função auxiliar para redimensionar imagem
@@ -70,7 +70,7 @@ const validarSenhaForte = (senha) => {
 
 const GerenciarUsuarios = () => {
   const { empresaAtual } = useAuth();
-  const { loading: permissaoLoading, user: authUser } = usePermissao('usuarios');
+  const { loading: permissaoLoading, user: authUser, autorizado } = usePermissao('usuarios');
   const [userProfile, setUserProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
 
@@ -91,8 +91,6 @@ const GerenciarUsuarios = () => {
     return () => unsubscribe();
   }, [authUser, empresaAtual]);
 
-  // Restrição removida
-  const autorizado = true;
 
   const [usuarios, setUsuarios] = useState([]);
   const [loading, setLoading] = useState(true);

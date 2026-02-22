@@ -10,7 +10,7 @@ import { checkPermission } from './permissionUtils';
 
 export default function Relatorios() {
   const { empresaAtual, empresas } = useAuth();
-  const { loading: loadingPermissoes, user: authUser } = usePermissao('relatorios');
+  const { loading: loadingPermissoes, user: authUser, autorizado } = usePermissao('relatorios');
 
   const empresasParaBuscar = useMemo(() => {
     if (empresaAtual) return [empresaAtual];
@@ -43,8 +43,6 @@ export default function Relatorios() {
     }
   }, [authUser, empresaAtual]);
 
-  // Restrição removida
-  const autorizado = true;
 
   useEffect(() => {
     if (!empresasParaBuscar || empresasParaBuscar.length === 0) {
