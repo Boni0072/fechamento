@@ -1081,30 +1081,27 @@ function processData(data, existingSteps = []) {
 
     let rawStatus = getVal(['STATUS', 'Status', 'status', 'SITUAÇÃO', 'Situação', 'situacao', 'Estado', 'estado']);
     
-    if (rawStatus) {
-       const s = String(rawStatus).toLowerCase();
-       if (s.includes('conclu')) {
-           status = 'concluido';
-           if (dataReal && dataPrevista && new Date(dataReal) > new Date(dataPrevista)) {
-               status = 'concluido_atraso';
-           }
-       }
-       else if (s.includes('atras')) status = 'atrasado';
-       else if (s.includes('andamento')) status = 'em_andamento';
-       else status = 'pendente';
+    const statusStr = rawStatus ? String(rawStatus).toLowerCase() : '';
+    const hasDataReal = dataReal !== null && dataReal !== undefined;
+    const isExplicitlyConcluido = statusStr.includes('conclu');
+
+    if (hasDataReal || isExplicitlyConcluido) {
+        status = 'concluido';
+        if (dataReal && dataPrevista && new Date(dataReal) > new Date(dataPrevista)) {
+            status = 'concluido_atraso';
+        }
     } else {
-       if (dataReal) {
-           status = 'concluido';
-           if (dataPrevista && new Date(dataReal) > new Date(dataPrevista)) {
-               status = 'concluido_atraso';
-           }
-       } else {
-           if (dataPrevista && new Date(dataPrevista) < now) {
-               status = 'atrasado';
-           } else {
-               status = 'pendente';
-           }
-       }
+        if (dataPrevista && new Date(dataPrevista) < now) {
+            status = 'atrasado';
+        } else if (statusStr.includes('andamento')) {
+            status = 'em_andamento';
+        } else {
+            status = 'pendente';
+        }
+
+        if (statusStr.includes('atras')) {
+            status = 'atrasado';
+        }
     }
 
     etapasValidadas.push({

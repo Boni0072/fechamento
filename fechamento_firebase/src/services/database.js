@@ -1,4 +1,5 @@
 import { db, ref, onValue, push, set, update, remove, query, orderByChild, equalTo } from './firebase';
+import { getFirestore, doc, setDoc } from 'firebase/firestore';
 
 // ==================== EMPRESAS ====================
 export const criarEmpresa = async (userId, empresa) => {
@@ -27,6 +28,14 @@ export const criarEmpresa = async (userId, empresa) => {
 
     await set(ref(db, `membros/${empresaRef.key}/${userId}`), membroData);
     console.log("DATABASE: Membro adicionado com sucesso.");
+
+    // Sincroniza com o Firestore (tenants) para que a empresa apareça na lista
+    const firestore = getFirestore();
+    await setDoc(doc(firestore, 'tenants', empresaRef.key), {
+      ...empresaData,
+      id: empresaRef.key
+    });
+    console.log("DATABASE: Empresa sincronizada com Firestore (tenants).");
     
     return empresaRef.key;
   } catch (error) {

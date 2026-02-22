@@ -8,7 +8,7 @@ import { Plus, Building2, Check, FileSpreadsheet, RefreshCw, Trash2, Pencil, Pal
 import * as XLSX from 'xlsx';
 
 export default function Empresas() {
-  const { empresas, empresaAtual, selecionarEmpresa, criarEmpresa } = useAuth();
+  const { empresas, empresaAtual, selecionarEmpresa, criarEmpresa, user } = useAuth();
   const { loading: loadingPermissoes, user: authUser } = usePermissao('empresas');
   const [userProfile, setUserProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
@@ -234,13 +234,42 @@ export default function Empresas() {
 
   const handleDeleteEmpresa = async (e, empresa) => {
     e.stopPropagation();
-    if (window.confirm(`Tem certeza que deseja excluir a empresa "${empresa.nome}"? Esta ação não pode ser desfeita.`)) {
+    
+    if (window.confirm(`Tem certeza que deseja excluir a empresa "${empresa.nome}"?\n\nEsta ação é IRREVERSÍVEL e apagará todos os dados associados.`)) {
+      setLoading(true);
       try {
         const db = getFirestore();
+        const rtdb = getDatabase();
+        
+        // Se estiver excluindo a empresa atual, limpa a seleção para evitar erros de visualização
+        if (empresaAtual?.id === empresa.id) {
+          selecionarEmpresa(null);
+        }
+
+        // 1. Remove do Firestore
         await deleteDoc(doc(db, 'tenants', empresa.id));
+        
+        // 2. Remove do Realtime Database (Cache)
+        await set(ref(rtdb, `tenants/${empresa.id}`), null);
+        
+        // 3. Remove referência do usuário atual para atualizar a lista
+        if (user?.id) {
+            const userDirRef = doc(db, 'users_directory', user.id);
+            const userDirSnap = await getDoc(userDirRef);
+            if (userDirSnap.exists()) {
+                const data = userDirSnap.data();
+                const currentList = data.empresasAcesso || [];
+                if (currentList.includes(empresa.id)) {
+                    const newList = currentList.filter(id => id !== empresa.id);
+                    await updateDoc(userDirRef, { empresasAcesso: newList });
+                }
+            }
+        }
       } catch (err) {
         console.error(err);
         alert('Erro ao excluir empresa: ' + err.message);
+      } finally {
+        setLoading(false);
       }
     }
   };
@@ -721,7 +750,7 @@ export default function Empresas() {
                   <img src={empresaEditando.appearance.logo} alt="Logo" className="w-full h-full object-contain p-0.5" />
                 </div>
               )}
-              <h3 className="text-lg font-semibold text-slate-800">{empresaEditando ? 'Editar Empresa' : 'Nova Empresa'}</h3>
+              <h3 className="text-lg font-semibold text-slate-800">{empresaEditando ? 'Editando' : 'Nova Empresa'}{nome ? `: ${nome}` : ''}</h3>
             </div>
             
             <form onSubmit={handleSalvar} className="p-6 space-y-4">
@@ -787,7 +816,7 @@ export default function Empresas() {
                       <img src={configEmpresa.appearance.logo} alt="Logo" className="w-full h-full object-contain p-0.5" />
                     </div>
                   )}
-                  <h3 className="text-lg font-semibold text-slate-800">Conexão Google Planilhas</h3>
+                  <h3 className="text-lg font-semibold text-slate-800">Conexão Planilhas: {configEmpresa?.nome}</h3>
                 </div>
                 <div className="flex gap-2">
                   <button
@@ -1162,11 +1191,30 @@ const processData = (data) => {
     dataReal = combinarDataHora(dataReal, horaTermino);
 
     let rawStatus = getVal(['STATUS', 'Status', 'status', 'SITUAÇÃO', 'Situação', 'situacao', 'Estado', 'estado']);
+    
     let status = 'pendente';
-    if (rawStatus && String(rawStatus).toLowerCase().includes('conclu')) {
-      status = 'concluido';
-    } else if (dataReal) {
-      status = 'concluido';
+    const now = new Date();
+    const statusStr = rawStatus ? String(rawStatus).toLowerCase() : '';
+    const hasDataReal = dataReal !== null && dataReal !== undefined;
+    const isExplicitlyConcluido = statusStr.includes('conclu');
+
+    if (hasDataReal || isExplicitlyConcluido) {
+        status = 'concluido';
+        if (dataReal && dataPrevista && new Date(dataReal) > new Date(dataPrevista)) {
+            status = 'concluido_atraso';
+        }
+    } else {
+        if (dataPrevista && new Date(dataPrevista) < now) {
+            status = 'atrasado';
+        } else if (statusStr.includes('andamento')) {
+            status = 'em_andamento';
+        } else {
+            status = 'pendente';
+        }
+
+        if (statusStr.includes('atras')) {
+            status = 'atrasado';
+        }
     }
 
     etapasValidadas.push({

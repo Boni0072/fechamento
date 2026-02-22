@@ -104,8 +104,10 @@ const GerenciarUsuarios = () => {
     cargo: '',
     telefone: '',
     perfilAcesso: 'Usuário',
-    paginasAcesso: []
+    paginasAcesso: [],
+    empresasAcesso: []
   });
+  const { empresas } = useAuth();
   const [mensagem, setMensagem] = useState({ tipo: '', texto: '' });
   const [avatarPreview, setAvatarPreview] = useState(null);
   const [modoEdicao, setModoEdicao] = useState(false);
@@ -113,7 +115,7 @@ const GerenciarUsuarios = () => {
   const [mostrarSenha, setMostrarSenha] = useState(false);
 
   useEffect(() => {
-    if (!permissaoLoading && !loadingProfile && autorizado && empresaAtual?.id) { // Só buscar usuários se estiver autorizado e com empresa
+    if (!permissaoLoading && !loadingProfile && empresaAtual?.id) { // Só buscar usuários se estiver autorizado e com empresa
       // Busca a lista de usuários em tempo real
       const db = getFirestore();
       const usuariosRef = collection(db, 'tenants', empresaAtual.id, 'usuarios');
@@ -125,8 +127,6 @@ const GerenciarUsuarios = () => {
         setUsuarios(listaUsuarios);
         setLoading(false);
       });
-      return () => unsubscribe();
-    } else if (!permissaoLoading && !autorizado) {
       setLoading(false); // Parar de carregar se não autorizado
     }
   }, [permissaoLoading, loadingProfile, autorizado, empresaAtual]);
@@ -143,6 +143,17 @@ const GerenciarUsuarios = () => {
         return { ...prev, paginasAcesso: paginas.filter(id => id !== paginaId) };
       } else {
         return { ...prev, paginasAcesso: [...paginas, paginaId] };
+      }
+    });
+  };
+
+  const handleEmpresaChange = (empresaId) => {
+    setDados(prev => {
+      const empresasSel = Array.isArray(prev.empresasAcesso) ? prev.empresasAcesso : [];
+      if (empresasSel.includes(empresaId)) {
+        return { ...prev, empresasAcesso: empresasSel.filter(id => id !== empresaId) };
+      } else {
+        return { ...prev, empresasAcesso: [...empresasSel, empresaId] };
       }
     });
   };
@@ -185,6 +196,12 @@ const GerenciarUsuarios = () => {
         paginasAcessoFinal = ['dashboard'];
     }
 
+    // Garante que empresasAcesso tenha pelo menos a empresa atual
+    let empresasAcessoFinal = Array.isArray(dados.empresasAcesso) ? dados.empresasAcesso : [];
+    if (empresasAcessoFinal.length === 0) {
+        empresasAcessoFinal = [empresaAtual.id];
+    }
+
     // Validação de senha (se fornecida)
     if (dados.senha) {
       const erroSenha = validarSenhaForte(dados.senha);
@@ -195,32 +212,37 @@ const GerenciarUsuarios = () => {
     }
 
     try {
+      const db = getFirestore();
       if (modoEdicao) {
-        const db = getFirestore();
-        const usuarioRef = doc(db, 'tenants', empresaAtual.id, 'usuarios', usuarioEditandoId);
-        
-        const dadosAtualizacao = {
+        const commonData = {
           nome: dados.nome,
           cargo: dados.cargo,
           telefone: dados.telefone,
           perfilAcesso: dados.perfilAcesso,
           avatar: avatarPreview,
-          paginasAcesso: paginasAcessoFinal
+          paginasAcesso: paginasAcessoFinal,
+          empresasAcesso: empresasAcessoFinal
         };
 
-        // Se houver senha digitada, salva no banco (conforme comportamento anterior)
         if (dados.senha) {
-          dadosAtualizacao.senha = dados.senha;
+          commonData.senha = dados.senha;
         }
 
-        await updateDoc(usuarioRef, dadosAtualizacao);
+        // 1. Salva em cada empresa selecionada (Tenant)
+        for (const empId of empresasAcessoFinal) {
+          await setDoc(doc(db, 'tenants', empId, 'usuarios', usuarioEditandoId), {
+            ...commonData,
+            email: dados.email
+          }, { merge: true });
+        }
 
-        // Atualiza também o diretório global para garantir o login e permissões
+        // 2. Atualiza diretório global (vínculo principal)
         await setDoc(doc(db, 'users_directory', usuarioEditandoId), {
-          empresaId: empresaAtual.id,
+          empresaId: empresasAcessoFinal[0],
           email: dados.email,
           perfilAcesso: dados.perfilAcesso,
-          paginasAcesso: paginasAcessoFinal
+          paginasAcesso: paginasAcessoFinal,
+          empresasAcesso: empresasAcessoFinal
         }, { merge: true });
 
         setMensagem({ tipo: 'sucesso', texto: 'Usuário atualizado com sucesso!' });
@@ -234,23 +256,29 @@ const GerenciarUsuarios = () => {
           const userCredential = await createUserWithEmailAndPassword(secondaryAuth, dados.email, dados.senha);
           const user = userCredential.user;
 
-          const db = getFirestore();
-          await setDoc(doc(db, 'tenants', empresaAtual.id, 'usuarios', user.uid), {
+          const commonData = {
             nome: dados.nome,
             email: dados.email,
             cargo: dados.cargo,
             telefone: dados.telefone,
             perfilAcesso: dados.perfilAcesso,
             avatar: avatarPreview,
-            paginasAcesso: paginasAcessoFinal
-          });
+            paginasAcesso: paginasAcessoFinal,
+            empresasAcesso: empresasAcessoFinal
+          };
 
-          // Cria o vínculo no diretório global para permitir o login
+          // 1. Salva em cada empresa selecionada (Tenant)
+          for (const empId of empresasAcessoFinal) {
+            await setDoc(doc(db, 'tenants', empId, 'usuarios', user.uid), commonData);
+          }
+
+          // 2. Cria o vínculo no diretório global para permitir o login
           await setDoc(doc(db, 'users_directory', user.uid), {
-            empresaId: empresaAtual.id,
+            empresaId: empresasAcessoFinal[0],
             email: dados.email,
             perfilAcesso: dados.perfilAcesso,
-            paginasAcesso: paginasAcessoFinal
+            paginasAcesso: paginasAcessoFinal,
+            empresasAcesso: empresasAcessoFinal
           });
           setMensagem({ tipo: 'sucesso', texto: 'Usuário criado com sucesso!' });
         } finally {
@@ -272,7 +300,8 @@ const GerenciarUsuarios = () => {
         cargo: '',
         telefone: '',
         perfilAcesso: 'Usuário',
-        paginasAcesso: []
+        paginasAcesso: [],
+        empresasAcesso: [empresaAtual.id]
       });
       
       setTimeout(() => setMensagem({ tipo: '', texto: '' }), 3000);
@@ -292,11 +321,12 @@ const GerenciarUsuarios = () => {
     setDados({
       nome: usuario.nome || '',
       email: usuario.email || '',
-      senha: '', // Senha não é preenchida na edição
+      senha: '',
       cargo: usuario.cargo || '',
       telefone: usuario.telefone || '',
       perfilAcesso: usuario.perfilAcesso || 'Usuário',
-      paginasAcesso: usuario.paginasAcesso ? (Array.isArray(usuario.paginasAcesso) ? usuario.paginasAcesso : Object.values(usuario.paginasAcesso)) : []
+      paginasAcesso: usuario.paginasAcesso ? (Array.isArray(usuario.paginasAcesso) ? usuario.paginasAcesso : Object.values(usuario.paginasAcesso)) : [],
+      empresasAcesso: usuario.empresasAcesso || [empresaAtual.id]
     });
     setAvatarPreview(usuario.avatar || null);
     setMostrarSenha(false);
@@ -581,22 +611,39 @@ const GerenciarUsuarios = () => {
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Páginas de Acesso</label>
-                  <div className="grid grid-cols-2 gap-2 bg-gray-50 p-3 rounded-md border border-gray-200">
-                    {PAGINAS_DISPONIVEIS.map(pagina => (
-                      <label key={pagina.id} className="flex items-center space-x-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={Array.isArray(dados.paginasAcesso) && dados.paginasAcesso.includes(pagina.id)}
-                          onChange={() => handlePaginaChange(pagina.id)}
-                          className="rounded text-blue-600 focus:ring-blue-500 h-4 w-4 border-gray-300"
-                        />
-                        <span className="text-sm text-gray-700">{pagina.label}</span>
-                      </label>
-                    ))}
-                  </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Empresas com Acesso</label>
+                <div className="grid grid-cols-1 gap-2 bg-slate-50 p-3 rounded-lg border border-slate-200 max-h-32 overflow-y-auto custom-scrollbar mb-4">
+                  {empresas && empresas.map(emp => (
+                    <label key={emp.id} className="flex items-center space-x-2 cursor-pointer hover:bg-slate-100 p-1 rounded">
+                      <input
+                        type="checkbox"
+                        checked={Array.isArray(dados.empresasAcesso) && dados.empresasAcesso.includes(emp.id)}
+                        onChange={() => handleEmpresaChange(emp.id)}
+                        className="rounded text-primary-600 focus:ring-primary-500 h-4 w-4 border-slate-300"
+                      />
+                      <span className="text-sm text-slate-700 font-medium">{emp.nome}</span>
+                    </label>
+                  ))}
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Páginas de Acesso</label>
+                <div className="grid grid-cols-2 gap-2 bg-slate-50 p-3 rounded-lg border border-slate-200 max-h-40 overflow-y-auto custom-scrollbar">
+                  {PAGINAS_DISPONIVEIS.map(pagina => (
+                    <label key={pagina.id} className="flex items-center space-x-2 cursor-pointer hover:bg-slate-100 p-1 rounded">
+                      <input
+                        type="checkbox"
+                        checked={Array.isArray(dados.paginasAcesso) && dados.paginasAcesso.includes(pagina.id)}
+                        onChange={() => handlePaginaChange(pagina.id)}
+                        className="rounded text-primary-600 focus:ring-primary-500 h-4 w-4 border-slate-300"
+                      />
+                      <span className="text-sm text-slate-700">{pagina.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
                 
                 <div className="flex justify-end space-x-3 mt-8 pt-4 border-t">
                   <button

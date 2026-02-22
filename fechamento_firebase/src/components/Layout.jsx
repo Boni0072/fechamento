@@ -235,12 +235,37 @@ const processData = (data, existingSteps) => {
 
     let dataReal = formatarData(rawDataReal);
     
-    let status = existing ? existing.status : 'pendente';
+    let rawStatus = getVal(['STATUS', 'Status', 'status', 'SITUAÇÃO', 'Situação', 'situacao', 'Estado', 'estado']);
+    
+    let status = 'pendente';
+    const now = new Date();
+    const statusStr = rawStatus ? String(rawStatus).toLowerCase() : '';
+    const hasDataReal = dataReal !== null && dataReal !== undefined;
+    const isExplicitlyConcluido = statusStr.includes('conclu');
+
+    if (hasDataReal || isExplicitlyConcluido) {
+        status = 'concluido';
+        if (dataReal && dataPrevista && new Date(dataReal) > new Date(dataPrevista)) {
+            status = 'concluido_atraso';
+        }
+    } else {
+        if (dataPrevista && new Date(dataPrevista) < now) {
+            status = 'atrasado';
+        } else if (statusStr.includes('andamento')) {
+            status = 'em_andamento';
+        } else {
+            status = 'pendente';
+        }
+
+        if (statusStr.includes('atras')) {
+            status = 'atrasado';
+        }
+    }
+
     let concluidoEm = existing ? existing.concluidoEm : null;
     let quemConcluiu = existing ? existing.quemConcluiu : null;
 
-    if (rawDataReal !== undefined && rawDataReal !== null && String(rawDataReal).trim() !== '') {
-      status = 'concluido';
+    if (status === 'concluido' || status === 'concluido_atraso') {
       if (!quemConcluiu) quemConcluiu = 'Importação Automática';
       if (!dataReal) dataReal = dataPrevista || new Date().toISOString();
       concluidoEm = dataReal;
@@ -257,8 +282,8 @@ const processData = (data, existingSteps) => {
       codigo: (codigo !== undefined && codigo !== null) ? codigo : '',
       observacoes: getVal(['Observações', 'observacoes', 'CODIGO', 'codigo']) || '',
       status: status,
-      concluidoEm: concluidoEm,
-      quemConcluiu: quemConcluiu
+      concluidoEm: concluidoEm || null,
+      quemConcluiu: quemConcluiu || null
     });
   });
 

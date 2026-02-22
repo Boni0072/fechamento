@@ -531,15 +531,30 @@ const processData = (data) => {
     
     // Busca status explícito na planilha (Coluna STATUS)
     let rawStatus = getVal(['STATUS', 'Status', 'status', 'SITUAÇÃO', 'Situação', 'situacao', 'Estado', 'estado']);
-    let status = 'pendente';
     
-    if (rawStatus && String(rawStatus).toLowerCase().includes('conclu')) {
-      status = 'concluido';
-    } else if (rawStatus && String(rawStatus).toLowerCase().includes('atras')) {
-      status = 'atrasado';
-    } else if (status === 'pendente' && rawDataReal !== undefined && rawDataReal !== null && String(rawDataReal).trim() !== '') {
-      // Auto-concluir APENAS se não houver status explícito dizendo o contrário
-      status = 'concluido';
+    let status = 'pendente';
+    const now = new Date();
+    const statusStr = rawStatus ? String(rawStatus).toLowerCase() : '';
+    const hasDataReal = dataReal !== null && dataReal !== undefined;
+    const isExplicitlyConcluido = statusStr.includes('conclu');
+    
+    if (hasDataReal || isExplicitlyConcluido) {
+        status = 'concluido';
+        if (dataReal && dataPrevista && new Date(dataReal) > new Date(dataPrevista)) {
+            status = 'concluido_atraso';
+        }
+    } else {
+        if (dataPrevista && new Date(dataPrevista) < now) {
+            status = 'atrasado';
+        } else if (statusStr.includes('andamento')) {
+            status = 'em_andamento';
+        } else {
+            status = 'pendente';
+        }
+
+        if (statusStr.includes('atras')) {
+            status = 'atrasado';
+        }
     }
 
     let concluidoEm = null;
@@ -562,8 +577,8 @@ const processData = (data) => {
       codigo: (codigo !== undefined && codigo !== null) ? String(codigo) : '',
       observacoes: getVal(['Observações', 'observacoes', 'Observação', 'observação', 'Observacao', 'observacao', 'Obs', 'obs', 'Comentários', 'comentarios']) || '',
       status: status,
-      concluidoEm: concluidoEm,
-      quemConcluiu: quemConcluiu,
+      concluidoEm: concluidoEm || null,
+      quemConcluiu: quemConcluiu || null,
       executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPor', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || ''
     });
   });

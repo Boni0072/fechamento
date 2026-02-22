@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { auth, loginWithGoogle, logout, onAuthChange } from '../services/firebase';
-import { getFirestore, doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { getFirestore, doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
 import { criarEmpresa, getEmpresas } from '../services/database';
 
 const AuthContext = createContext();
@@ -97,21 +97,63 @@ export const AuthProvider = ({ children }) => {
   // Load companies when user logs in
   useEffect(() => {
     if (user?.id) {
-      const unsubscribe = getEmpresas(user.id, (empresasData) => {
-        setEmpresas(empresasData);
-        const savedEmpresaId = localStorage.getItem('empresaAtualId');
-        const savedEmpresa = empresasData.find(e => e.id === savedEmpresaId);
-
-        if (savedEmpresa) {
-          setEmpresaAtual(savedEmpresa);
-        } else if (empresasData.length > 0) {
-          setEmpresaAtual(empresasData[0]);
-        } else {
-          setEmpresaAtual(null);
-          setLoading(false); // No companies, nothing more to load
+      const db = getFirestore();
+      // Primeiro, buscamos o diretório do usuário para ver quais empresas ele tem acesso
+      const userDirRef = doc(db, 'users_directory', user.id);
+      
+      const unsubscribeDir = onSnapshot(userDirRef, async (snapshot) => {
+        let empresasIds = [];
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          empresasIds = data.empresasAcesso || (data.empresaId ? [data.empresaId] : []);
         }
+
+        // Também buscamos empresas onde ele é o owner (legado/retrocompatibilidade)
+        const unsubscribeEmpresas = getEmpresas(user.id, (empresasOwner) => {
+          const ownerIds = empresasOwner.map(e => e.id);
+          // Unificamos as listas de IDs (sem duplicatas)
+          const allEmpresasIds = [...new Set([...empresasIds, ...ownerIds])];
+          
+          if (allEmpresasIds.length > 0) {
+            // Buscamos os detalhes de cada empresa
+            const rtdb = getFirestore();
+            const promises = allEmpresasIds.map(async (id) => {
+              const empDoc = await getDoc(doc(rtdb, 'tenants', id));
+              if (empDoc.exists()) {
+                return { id: empDoc.id, ...empDoc.data() };
+              }
+              // Fallback para empresas que ainda estão no Realtime Database se necessário
+              // Mas aqui o sistema parece estar migrando para Firestore tenants
+              return null;
+            });
+
+            Promise.all(promises).then(results => {
+              const validEmpresas = results.filter(e => e !== null);
+              setEmpresas(validEmpresas);
+              
+              const savedEmpresaId = localStorage.getItem('empresaAtualId');
+              const savedEmpresa = validEmpresas.find(e => e.id === savedEmpresaId);
+
+              if (savedEmpresa) {
+                setEmpresaAtual(savedEmpresa);
+              } else if (validEmpresas.length > 0) {
+                setEmpresaAtual(validEmpresas[0]);
+              } else {
+                setEmpresaAtual(null);
+                setLoading(false);
+              }
+            });
+          } else {
+            setEmpresas([]);
+            setEmpresaAtual(null);
+            setLoading(false);
+          }
+        });
+
+        return () => unsubscribeEmpresas();
       });
-      return () => unsubscribe();
+
+      return () => unsubscribeDir();
     }
   }, [user?.id]);
 
@@ -152,6 +194,22 @@ export const AuthProvider = ({ children }) => {
         perfilAcesso: 'Master',
         paginasAcesso: ['dashboard', 'empresas', 'etapas', 'importacao', 'relatorios', 'historico', 'cadastros', 'notificacoes', 'fluxograma', 'usuarios'],
         createdAt: new Date().toISOString()
+      }, { merge: true });
+
+      // Adiciona a nova empresa ao diretório global de empresas do usuário
+      const userDirRef = doc(db, 'users_directory', user.id);
+      const userDirSnap = await getDoc(userDirRef);
+      let empresasAcesso = [empresaId];
+      
+      if (userDirSnap.exists()) {
+        const currentData = userDirSnap.data();
+        const currentEmpresas = currentData.empresasAcesso || (currentData.empresaId ? [currentData.empresaId] : []);
+        empresasAcesso = [...new Set([...currentEmpresas, empresaId])];
+      }
+
+      await setDoc(userDirRef, {
+        empresasAcesso: empresasAcesso,
+        empresaId: empresasAcesso[0] // Mantém um ID principal para compatibilidade
       }, { merge: true });
     }
     

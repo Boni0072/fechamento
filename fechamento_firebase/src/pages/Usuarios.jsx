@@ -83,8 +83,10 @@ export default function Usuarios() {
     cargo: '',
     telefone: '',
     perfilAcesso: 'Usuário',
-    paginasAcesso: []
+    paginasAcesso: [],
+    empresasAcesso: []
   });
+  const { empresas } = useAuth();
   const [mensagem, setMensagem] = useState({ tipo: '', texto: '' });
   const [avatarPreview, setAvatarPreview] = useState(null);
   const [modoEdicao, setModoEdicao] = useState(false);
@@ -136,6 +138,17 @@ export default function Usuarios() {
     });
   };
 
+  const handleEmpresaChange = (empresaId) => {
+    setDados(prev => {
+      const empresasSel = Array.isArray(prev.empresasAcesso) ? prev.empresasAcesso : [];
+      if (empresasSel.includes(empresaId)) {
+        return { ...prev, empresasAcesso: empresasSel.filter(id => id !== empresaId) };
+      } else {
+        return { ...prev, empresasAcesso: [...empresasSel, empresaId] };
+      }
+    });
+  };
+
   const handleAvatarChange = async (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -159,6 +172,12 @@ export default function Usuarios() {
         paginasAcessoFinal = ['dashboard'];
     }
 
+    // Garante que empresasAcesso tenha pelo menos a empresa atual
+    let empresasAcessoFinal = Array.isArray(dados.empresasAcesso) ? dados.empresasAcesso : [];
+    if (empresasAcessoFinal.length === 0) {
+        empresasAcessoFinal = [empresaAtual.id];
+    }
+
     if (dados.senha) {
       const erroSenha = validarSenhaForte(dados.senha);
       if (erroSenha) {
@@ -168,31 +187,37 @@ export default function Usuarios() {
     }
 
     try {
+      const db = getFirestore();
       if (modoEdicao) {
-        const db = getFirestore();
-        const usuarioRef = doc(db, 'tenants', empresaAtual.id, 'usuarios', usuarioEditandoId);
-        
-        const dadosAtualizacao = {
+        const commonData = {
           nome: dados.nome,
           cargo: dados.cargo,
           telefone: dados.telefone,
           perfilAcesso: dados.perfilAcesso,
           avatar: avatarPreview,
-          paginasAcesso: paginasAcessoFinal
+          paginasAcesso: paginasAcessoFinal,
+          empresasAcesso: empresasAcessoFinal
         };
 
         if (dados.senha) {
-          dadosAtualizacao.senha = dados.senha;
+          commonData.senha = dados.senha;
         }
 
-        await updateDoc(usuarioRef, dadosAtualizacao);
-        
-        // Atualiza também o diretório global para garantir o login e permissões
+        // 1. Salva em cada empresa selecionada (Tenant)
+        for (const empId of empresasAcessoFinal) {
+          await setDoc(doc(db, 'tenants', empId, 'usuarios', usuarioEditandoId), {
+            ...commonData,
+            email: dados.email
+          }, { merge: true });
+        }
+
+        // 2. Atualiza diretório global (vínculo principal)
         await setDoc(doc(db, 'users_directory', usuarioEditandoId), {
-          empresaId: empresaAtual.id,
+          empresaId: empresasAcessoFinal[0], // Empresa principal (para carregar primeiro)
           email: dados.email,
           perfilAcesso: dados.perfilAcesso,
-          paginasAcesso: paginasAcessoFinal
+          paginasAcesso: paginasAcessoFinal,
+          empresasAcesso: empresasAcessoFinal
         }, { merge: true });
 
         setMensagem({ tipo: 'sucesso', texto: 'Usuário atualizado com sucesso!' });
@@ -210,8 +235,7 @@ export default function Usuarios() {
           const userCredential = await createUserWithEmailAndPassword(secondaryAuth, dados.email, dados.senha);
           const user = userCredential.user;
 
-          const db = getFirestore();
-          await setDoc(doc(db, 'tenants', empresaAtual.id, 'usuarios', user.uid), {
+          const commonData = {
             nome: dados.nome,
             email: dados.email,
             cargo: dados.cargo,
@@ -219,15 +243,22 @@ export default function Usuarios() {
             perfilAcesso: dados.perfilAcesso,
             avatar: avatarPreview,
             paginasAcesso: paginasAcessoFinal,
+            empresasAcesso: empresasAcessoFinal,
             createdAt: new Date().toISOString()
-          });
+          };
+
+          // 1. Salva em cada empresa selecionada (Tenant)
+          for (const empId of empresasAcessoFinal) {
+            await setDoc(doc(db, 'tenants', empId, 'usuarios', user.uid), commonData);
+          }
           
-          // Adiciona ao diretório global para login
+          // 2. Adiciona ao diretório global para login
           await setDoc(doc(db, 'users_directory', user.uid), {
-            empresaId: empresaAtual.id,
+            empresaId: empresasAcessoFinal[0],
             email: dados.email,
             perfilAcesso: dados.perfilAcesso,
-            paginasAcesso: paginasAcessoFinal
+            paginasAcesso: paginasAcessoFinal,
+            empresasAcesso: empresasAcessoFinal
           });
 
           setMensagem({ tipo: 'sucesso', texto: 'Usuário criado com sucesso!' });
@@ -259,7 +290,8 @@ export default function Usuarios() {
       cargo: usuario.cargo || '',
       telefone: usuario.telefone || '',
       perfilAcesso: usuario.perfilAcesso || 'Usuário',
-      paginasAcesso: usuario.paginasAcesso ? (Array.isArray(usuario.paginasAcesso) ? usuario.paginasAcesso : Object.values(usuario.paginasAcesso)) : []
+      paginasAcesso: usuario.paginasAcesso ? (Array.isArray(usuario.paginasAcesso) ? usuario.paginasAcesso : Object.values(usuario.paginasAcesso)) : [],
+      empresasAcesso: usuario.empresasAcesso || [empresaAtual.id]
     });
     setAvatarPreview(usuario.avatar || null);
     setMostrarSenha(false);
@@ -306,7 +338,8 @@ export default function Usuarios() {
       cargo: '',
       telefone: '',
       perfilAcesso: 'Usuário',
-      paginasAcesso: []
+      paginasAcesso: [],
+      empresasAcesso: [empresaAtual.id]
     });
     setAvatarPreview(null);
     setModoEdicao(false);
@@ -538,6 +571,23 @@ export default function Usuarios() {
                     <option value="Admin">Admin</option>
                     <option value="Master">Master</option>
                   </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Empresas com Acesso</label>
+                <div className="grid grid-cols-1 gap-2 bg-slate-50 p-3 rounded-lg border border-slate-200 max-h-32 overflow-y-auto custom-scrollbar mb-4">
+                  {empresas && empresas.map(emp => (
+                    <label key={emp.id} className="flex items-center space-x-2 cursor-pointer hover:bg-slate-100 p-1 rounded">
+                      <input
+                        type="checkbox"
+                        checked={Array.isArray(dados.empresasAcesso) && dados.empresasAcesso.includes(emp.id)}
+                        onChange={() => handleEmpresaChange(emp.id)}
+                        className="rounded text-primary-600 focus:ring-primary-500 h-4 w-4 border-slate-300"
+                      />
+                      <span className="text-sm text-slate-700 font-medium">{emp.nome}</span>
+                    </label>
+                  ))}
                 </div>
               </div>
 
