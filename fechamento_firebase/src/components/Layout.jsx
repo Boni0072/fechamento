@@ -3,7 +3,7 @@ import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import { useAuth } from '../contexts/AuthContext';
 import { importarEtapas } from '../services/database';
-import { getDatabase, ref, get } from 'firebase/database';
+import { getDatabase, ref, get, set } from 'firebase/database';
 import * as XLSX from 'xlsx';
 import { RefreshCw, CheckCircle2, AlertCircle, CloudLightning } from 'lucide-react';
 import { format } from 'date-fns';
@@ -11,6 +11,8 @@ import { format } from 'date-fns';
 export default function Layout() {
   const { empresaAtual } = useAuth();
   const [syncState, setSyncState] = useState({ status: 'idle', message: '', lastSync: null });
+  const [autoSync, setAutoSync] = useState(false);
+  const [syncIntervalMinutes, setSyncIntervalMinutes] = useState(1);
 
   const syncGoogleSheet = useCallback(async () => {
     if (!empresaAtual?.id || !empresaAtual?.spreadsheetId) return;
@@ -19,8 +21,9 @@ export default function Layout() {
     
     try {
       // 1. Busca dados frescos do Google Sheets
-      // Adicionado gid=0 para garantir a primeira aba e timestamp para evitar cache
-      const url = `https://docs.google.com/spreadsheets/d/${empresaAtual.spreadsheetId}/gviz/tq?tqx=out:csv&gid=0&t=${Date.now()}`;
+      // CORREÇÃO: Usa o parâmetro 'sheet' para buscar a aba específica configurada, ou gid=0 como fallback
+      const sheetParam = empresaAtual.sheetName ? `&sheet=${encodeURIComponent(empresaAtual.sheetName)}` : '&gid=0';
+      const url = `https://docs.google.com/spreadsheets/d/${empresaAtual.spreadsheetId}/gviz/tq?tqx=out:csv${sheetParam}&t=${Date.now()}`;
       const response = await fetch(url, { cache: 'no-store' });
       
       if (!response.ok) throw new Error(`Erro HTTP ${response.status}`);
@@ -32,6 +35,9 @@ export default function Layout() {
       }
 
       const workbook = XLSX.read(csvText, { type: 'string' });
+      
+      // Como pedimos uma aba específica via URL, o CSV retornado contém apenas os dados dessa aba.
+      // O XLSX.read vai criar um workbook com uma única aba (geralmente "Sheet1").
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const data = XLSX.utils.sheet_to_json(sheet);
 
@@ -39,7 +45,7 @@ export default function Layout() {
 
       // 2. Busca Períodos existentes
       const db = getDatabase();
-      const periodosSnapshot = await get(ref(db, `tenants/${empresaAtual.id}/periodos`));
+      const periodosSnapshot = await get(ref(db, `periodos/${empresaAtual.id}`));
       const periodosData = periodosSnapshot.val();
       const periodos = periodosData 
         ? Object.entries(periodosData).map(([id, val]) => ({ id, ...val }))
@@ -79,9 +85,17 @@ export default function Layout() {
       // 6. Atualiza o banco de dados
       if (processedSteps.length > 0) {
           await importarEtapas(empresaAtual.id, targetPeriod.id, processedSteps);
+          
+          // Atualiza o cache no Realtime Database para refletir as mudanças automaticamente no sistema
+          await set(ref(db, `tenants/${empresaAtual.id}/tabelaGoogle`), processedSteps);
+
+          const nomeEmpresa = empresaAtual.nome || 'Empresa';
+          const mesLabel = targetPeriod.mes || '?';
+          const anoLabel = targetPeriod.ano || '?';
+
           setSyncState({ 
               status: 'success', 
-            message: `Atualizado: ${processedSteps.length} etapas (${targetPeriod.mes}/${targetPeriod.ano})`, 
+            message: `Atualizado: ${processedSteps.length} etapas (${mesLabel}/${anoLabel}) - ${nomeEmpresa}`, 
               lastSync: new Date() 
           });
       } else {
@@ -100,9 +114,14 @@ export default function Layout() {
 
   useEffect(() => {
     syncGoogleSheet();
-    const interval = setInterval(syncGoogleSheet, 2 * 60 * 1000);
-    return () => clearInterval(interval);
   }, [syncGoogleSheet]);
+
+  useEffect(() => {
+    if (autoSync) {
+      const interval = setInterval(syncGoogleSheet, syncIntervalMinutes * 60 * 1000);
+      return () => clearInterval(interval);
+    }
+  }, [autoSync, syncGoogleSheet, syncIntervalMinutes]);
 
   return (
     <div className="flex min-h-screen bg-slate-50">
@@ -114,6 +133,32 @@ export default function Layout() {
                 <div className="flex items-center gap-2 text-slate-500">
                     <CloudLightning className={`w-3 h-3 ${syncState.status === 'syncing' ? 'text-blue-500 animate-pulse' : 'text-slate-400'}`} />
                     <span className="font-medium">Google Sheets:</span>
+                </div>
+                
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 px-2 py-1 rounded transition-colors select-none">
+                    <input 
+                      type="checkbox" 
+                      checked={autoSync}
+                      onChange={(e) => setAutoSync(e.target.checked)}
+                      className="rounded text-blue-600 focus:ring-blue-500 h-3.5 w-3.5 border-slate-300"
+                    />
+                    <span className="text-slate-600 font-medium">Auto</span>
+                  </label>
+                  
+                  {autoSync && (
+                    <div className="flex items-center gap-1">
+                      <input 
+                        type="number" 
+                        min="1" 
+                        max="60" 
+                        value={syncIntervalMinutes} 
+                        onChange={(e) => setSyncIntervalMinutes(Math.max(1, parseInt(e.target.value) || 1))}
+                        className="w-12 h-6 px-1 border border-slate-300 rounded text-center text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                      <span className="text-slate-500">min</span>
+                    </div>
+                  )}
                 </div>
                 
                 <button 
