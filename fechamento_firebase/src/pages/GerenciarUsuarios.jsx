@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { getApp, initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, sendPasswordResetEmail, signOut } from 'firebase/auth';
 import { getFirestore, collection, doc, updateDoc, deleteDoc, setDoc, onSnapshot } from 'firebase/firestore';
-import { User, Camera, Pencil, Trash2, Eye, EyeOff, LogOut } from 'lucide-react';
+import { User, Camera, Pencil, Trash2, Eye, EyeOff, LogOut, Mail } from 'lucide-react';
 import { usePermissao } from '../hooks/usePermissao'; // Importar o hook de permissão
 import { useAuth } from '../contexts/AuthContext';
 import { checkPermission } from './permissionUtils';
@@ -168,17 +168,19 @@ const GerenciarUsuarios = () => {
     }
   };
 
-  const handleResetSenha = async () => {
-    if (!dados.email) return;
-    if (!window.confirm(`Enviar email de redefinição de senha para ${dados.email}?`)) return;
+  const handleSendCollectionRequest = async (usuario) => {
+    if (!usuario.email) return;
     
-    try {
-      const auth = getAuth();
-      await sendPasswordResetEmail(auth, dados.email);
-      setMensagem({ tipo: 'sucesso', texto: 'Email de redefinição enviado com sucesso!' });
-    } catch (error) {
-      console.error("Erro ao enviar email:", error);
-      setMensagem({ tipo: 'erro', texto: 'Erro ao enviar email de redefinição.' });
+    if (window.confirm(`Enviar link de redefinição de senha para ${usuario.nome || usuario.email}?`)) {
+      try {
+        const auth = getAuth();
+        await sendPasswordResetEmail(auth, usuario.email);
+        setMensagem({ tipo: 'sucesso', texto: `Link enviado para ${usuario.email}!` });
+      } catch (error) {
+        console.error("Erro ao enviar email:", error);
+        setMensagem({ tipo: 'erro', texto: 'Erro ao enviar email.' });
+      }
+      setTimeout(() => setMensagem({ tipo: '', texto: '' }), 3000);
     }
   };
 
@@ -479,6 +481,13 @@ const GerenciarUsuarios = () => {
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                  <button
+                    onClick={() => handleSendCollectionRequest(usuario)}
+                    className="text-orange-600 hover:text-orange-900 mr-4"
+                    title="Enviar link de acesso"
+                  >
+                    <Mail className="h-5 w-5" />
+                  </button>
                   <button
                     onClick={() => handleEditar(usuario)}
                     className="text-indigo-600 hover:text-indigo-900 mr-4"
