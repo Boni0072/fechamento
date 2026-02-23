@@ -4,7 +4,7 @@ import { getAuth, createUserWithEmailAndPassword, sendPasswordResetEmail } from 
 import { getFirestore, collection, doc, updateDoc, deleteDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
-import { Users, User, Plus, Pencil, Trash2, Eye, EyeOff, Camera, Mail, Shield, X, Download, Upload } from 'lucide-react';
+import { Users, User, Plus, Pencil, Trash2, Eye, EyeOff, Camera, Mail, Shield, X, Download, Upload, Key, Send } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 const PAGINAS_DISPONIVEIS = [
@@ -93,6 +93,8 @@ export default function Usuarios() {
   const [modoEdicao, setModoEdicao] = useState(false);
   const [usuarioEditandoId, setUsuarioEditandoId] = useState(null);
   const [mostrarSenha, setMostrarSenha] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetUser, setResetUser] = useState(null);
 
   useEffect(() => {
     if (authUser?.id && empresaAtual?.id) {
@@ -463,6 +465,41 @@ export default function Usuarios() {
     setMostrarSenha(false);
   };
 
+  const handleRequestPasswordReset = (usuario) => {
+    setResetUser(usuario);
+    setShowResetModal(true);
+  };
+
+  const sendFirebasePasswordReset = async () => {
+    if (!resetUser?.email) return;
+    
+    try {
+      const auth = getAuth();
+      await sendPasswordResetEmail(auth, resetUser.email);
+      setMensagem({ tipo: 'sucesso', texto: `Link de redefinição enviado para ${resetUser.email}!` });
+      setShowResetModal(false);
+      setResetUser(null);
+      setTimeout(() => setMensagem({ tipo: '', texto: '' }), 3000);
+    } catch (error) {
+      console.error("Erro ao enviar email de redefinição:", error);
+      setMensagem({ tipo: 'erro', texto: 'Erro ao enviar link: ' + error.message });
+    }
+  };
+
+  const sendOutlookEmail = () => {
+    if (!resetUser?.email) return;
+    
+    const subject = encodeURIComponent("Solicitação de Alteração de Senha");
+    const linkSistema = window.location.origin;
+    const body = encodeURIComponent(
+      `Olá ${resetUser.nome || 'Usuário'},\n\nRecebemos uma solicitação para alteração da sua senha de acesso.\n\nAcesse o sistema: ${linkSistema}\n\nSe você esqueceu sua senha, solicite ao administrador o envio do link de redefinição automática ou utilize a opção "Esqueci minha senha" na tela de login.\n\nAtenciosamente,\n${empresaAtual?.nome || 'Administração'}`
+    );
+    
+    window.location.href = `mailto:${resetUser.email}?subject=${subject}&body=${body}`;
+    setShowResetModal(false);
+    setResetUser(null);
+  };
+
   if (permissaoLoading || loadingProfile) {
     return (
       <div className="flex flex-col items-center justify-center h-96">
@@ -569,6 +606,13 @@ export default function Usuarios() {
                       title="Editar"
                     >
                       <Pencil className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleRequestPasswordReset(usuario)}
+                      className="p-1.5 text-slate-400 hover:text-yellow-600 hover:bg-yellow-50 rounded-lg transition-colors"
+                      title="Solicitar Alteração de Senha"
+                    >
+                      <Key className="w-4 h-4" />
                     </button>
                     <button
                       onClick={() => handleExcluir(usuario.uid)}
@@ -754,6 +798,47 @@ export default function Usuarios() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Solicitação de Senha */}
+      {showResetModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-fadeIn">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-slate-800">Solicitar Alteração de Senha</h3>
+              <button onClick={() => setShowResetModal(false)} className="p-1 hover:bg-slate-100 rounded-full text-slate-500">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6">
+              <p className="text-slate-600 mb-6">
+                Escolha como deseja enviar a solicitação de alteração de senha para <strong>{resetUser?.nome}</strong> ({resetUser?.email}):
+              </p>
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => setShowResetModal(false)}
+                  className="px-4 py-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={sendFirebasePasswordReset}
+                  className="px-4 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-900 flex items-center gap-2"
+                >
+                  <Send className="w-4 h-4" />
+                  Enviar Link Automático
+                </button>
+                <button
+                  onClick={sendOutlookEmail}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
+                >
+                  <Mail className="w-4 h-4" />
+                  Abrir Outlook
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
