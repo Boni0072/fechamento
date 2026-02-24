@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { getFirestore, doc, onSnapshot, updateDoc, collection } from 'firebase/firestore';
+import { getDatabase, ref, onValue } from 'firebase/database';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
-import { getPeriodos, getEtapas, getResponsaveis } from '../services/database';
+import { getPeriodos, getResponsaveis } from '../services/database';
 import { Bell, Clock, AlertTriangle, Settings, Mail, Send, X, Mailbox, ChevronDown, ChevronUp } from 'lucide-react';
 import { format, differenceInDays } from 'date-fns';
 import { checkPermission } from './permissionUtils';
@@ -92,31 +93,28 @@ export default function Notificacoes() {
   }, [empresasParaBuscar]);
 
   useEffect(() => {
-    if (!periodoSelecionado || !empresasParaBuscar || empresasParaBuscar.length === 0) {
+    if (!empresasParaBuscar || empresasParaBuscar.length === 0) {
         setEtapas([]);
         return;
     };
 
+    const db = getDatabase();
     const unsubscribes = [];
-    const etapasMap = new Map();
+    const stepsByCompany = {};
 
     empresasParaBuscar.forEach(emp => {
-      const unsubPeriodos = getPeriodos(emp.id, (periodsData) => {
-        const match = periodsData.find(p => p.mes === periodoSelecionado.mes && p.ano === periodoSelecionado.ano);
-        if (match) {
-          const unsubEtapas = getEtapas(emp.id, match.id, (etapasData) => {
-            etapasData.forEach(e => etapasMap.set(`${emp.id}_${e.id}`, { ...e, empresaId: emp.id, empresaNome: emp.nome }));
-            const allEtapas = Array.from(etapasMap.values());
-            setEtapas(allEtapas);
-          });
-          unsubscribes.push(unsubEtapas);
-        }
-      });
-      unsubscribes.push(unsubPeriodos);
+        const tableRef = ref(db, `tenants/${emp.id}/tabelaGoogle`);
+        const unsub = onValue(tableRef, (snapshot) => {
+            const data = snapshot.val();
+            const processed = data ? processData(data) : [];
+            stepsByCompany[emp.id] = processed.map(e => ({ ...e, empresaId: emp.id, empresaNome: emp.nome }));
+            setEtapas(Object.values(stepsByCompany).flat());
+        });
+        unsubscribes.push(unsub);
     });
     
     return () => unsubscribes.forEach(u => u());
-  }, [periodoSelecionado, empresasParaBuscar]);
+  }, [empresasParaBuscar]);
 
   // Busca responsáveis para obter os e-mails
   useEffect(() => {
@@ -154,8 +152,9 @@ export default function Notificacoes() {
     if (e.dataReal) return false;
     if (!e.dataPrevista) return false;
     const prevista = new Date(e.dataPrevista);
+    prevista.setHours(0, 0, 0, 0);
     const dias = differenceInDays(prevista, hoje);
-    return dias >= 0 && dias <= (config.daysNotice || 3);
+    return dias >= 0 && dias <= Number(config.daysNotice || 3);
   });
 
   const etapasAtrasadas = etapas.filter(e => e.status === 'atrasado');
@@ -412,7 +411,9 @@ export default function Notificacoes() {
                 ) : (
                   <div className="space-y-2">
                     {etapasProximasPrazo.map(etapa => {
-                      const dias = differenceInDays(new Date(etapa.dataPrevista), hoje);
+                      const prevista = new Date(etapa.dataPrevista);
+                      prevista.setHours(0, 0, 0, 0);
+                      const dias = differenceInDays(prevista, hoje);
                       return (
                         <div key={etapa.id} className="flex items-center justify-between p-4 bg-yellow-50 rounded-lg">
                           <div>
@@ -460,7 +461,10 @@ export default function Notificacoes() {
                 ) : (
                   <div className="space-y-2">
                     {etapasAtrasadas.map(etapa => {
-                      const dias = differenceInDays(hoje, new Date(etapa.dataPrevista));
+                      const prevista = etapa.dataPrevista ? new Date(etapa.dataPrevista) : null;
+                      if (prevista) prevista.setHours(0, 0, 0, 0);
+                      const dias = prevista ? differenceInDays(hoje, prevista) : 0;
+
                       return (
                         <div key={etapa.id} className="flex items-center justify-between p-4 bg-red-50 rounded-lg">
                           <div>
@@ -469,10 +473,10 @@ export default function Notificacoes() {
                           </div>
                           <div className="text-right">
                             <p className="text-sm font-medium text-red-700">
-                              {dias} dia{dias > 1 ? 's' : ''} de atraso
+                              {prevista ? `${dias} dia${dias > 1 ? 's' : ''} de atraso` : 'Data não definida'}
                             </p>
                             <p className="text-xs text-slate-500">
-                              Prevista: {format(new Date(etapa.dataPrevista), 'dd/MM/yyyy')}
+                              Prevista: {prevista ? format(new Date(etapa.dataPrevista), 'dd/MM/yyyy') : '-'}
                             </p>
                           </div>
                         </div>
@@ -640,4 +644,154 @@ function TabButton({ active, onClick, icon, label }) {
       {label}
     </button>
   );
+}
+
+// Função auxiliar para processar dados (Mesma lógica do Dashboard)
+function processData(data) {
+  if (!Array.isArray(data)) return [];
+  const etapasValidadas = [];
+
+  const formatarData = (valor) => {
+    if (valor === null || valor === undefined || String(valor).trim() === '') return null;
+    if (typeof valor === 'number') {
+      const valorAjustado = Math.floor(valor + 0.001);
+      const date = new Date((valorAjustado - 25569) * 86400 * 1000 + 43200000);
+      return date.toISOString();
+    }
+    if (typeof valor === 'string') {
+      const v = valor.trim();
+      const dmy = v.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})(?:[\sT]+(\d{1,2}):(\d{2}))?/);
+      if (dmy) {
+        const dia = parseInt(dmy[1], 10);
+        const mes = parseInt(dmy[2], 10);
+        let ano = parseInt(dmy[3], 10);
+        const hora = dmy[4] ? parseInt(dmy[4], 10) : null;
+        const min = dmy[5] ? parseInt(dmy[5], 10) : null;
+        if (ano < 100) ano += 2000;
+        if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) {
+             if (hora !== null) {
+               const date = new Date(ano, mes - 1, dia, hora, min || 0, 0);
+               if (!isNaN(date.getTime())) return date.toISOString();
+             } else {
+               const date = new Date(Date.UTC(ano, mes - 1, dia, 12, 0, 0));
+               if (!isNaN(date.getTime())) return date.toISOString();
+             }
+        }
+      }
+      const ymd = v.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})(?:[\sT]+(\d{1,2}):(\d{2}))?/);
+      if (ymd) {
+         const ano = parseInt(ymd[1], 10);
+         const mes = parseInt(ymd[2], 10);
+         const dia = parseInt(ymd[3], 10);
+         const hora = ymd[4] ? parseInt(ymd[4], 10) : null;
+         const min = ymd[5] ? parseInt(ymd[5], 10) : null;
+         if (hora !== null) {
+            const date = new Date(ano, mes - 1, dia, hora, min || 0, 0);
+            if (!isNaN(date.getTime())) return date.toISOString();
+         } else {
+            const date = new Date(Date.UTC(ano, mes - 1, dia, 12, 0, 0));
+            if (!isNaN(date.getTime())) return date.toISOString();
+         }
+      }
+    }
+    return null;
+  };
+
+  const combinarDataHora = (dataISO, horaVal) => {
+    if (!dataISO) return null;
+    if (horaVal === undefined || horaVal === null || String(horaVal).trim() === '') return dataISO;
+    const dt = new Date(dataISO);
+    const year = dt.getUTCFullYear();
+    const month = dt.getUTCMonth();
+    const day = dt.getUTCDate();
+    let hours = 0;
+    let minutes = 0;
+    if (typeof horaVal === 'number') {
+      const totalSeconds = Math.round(horaVal * 86400);
+      hours = Math.floor(totalSeconds / 3600) % 24;
+      minutes = Math.floor((totalSeconds % 3600) / 60);
+    } else if (typeof horaVal === 'string') {
+      const v = horaVal.trim();
+      if (v.includes('T') || v.includes('-') || v.includes('/')) {
+        const timeDate = new Date(v);
+        if (!isNaN(timeDate.getTime())) {
+          hours = v.toUpperCase().includes('Z') ? timeDate.getUTCHours() : timeDate.getHours();
+          minutes = v.toUpperCase().includes('Z') ? timeDate.getUTCMinutes() : timeDate.getMinutes();
+        }
+      } else {
+        const parts = v.split(':');
+        if (parts.length >= 2) {
+          hours = parseInt(parts[0], 10) || 0;
+          minutes = parseInt(parts[1], 10) || 0;
+        }
+      }
+    }
+    const localDate = new Date(year, month, day, hours, minutes, 0, 0);
+    return localDate.toISOString();
+  };
+
+  data.forEach((row) => {
+    const getVal = (keys) => {
+      const normalize = (k) => k ? String(k).toLowerCase().replace(/\s+/g, ' ').trim() : '';
+      for (const k of keys) {
+        let val = row[k];
+        if (val === undefined) {
+          const target = normalize(k);
+          const foundKey = Object.keys(row).find(rk => normalize(rk) === target);
+          if (foundKey) val = row[foundKey];
+        }
+        if (val !== undefined && val !== null && String(val).trim() !== '') return val;
+      }
+      return undefined;
+    };
+
+    const nome = getVal(['TAREFA', 'tarefa', 'Nome', 'nome', 'Etapa', 'etapa', 'Etapas', 'etapas', 'Tarefas', 'tarefas', 'Atividade', 'atividade', 'Descrição', 'descricao', 'Item', 'item']);
+    if (!nome) return;
+
+    let dataPrevista = formatarData(getVal(['INÍCIO', 'início', 'inicio', 'Data Prevista', 'dataPrevista', 'Data de Início', 'Data de Inicio', 'Previsão', 'Previsao', 'Data', 'Date', 'Start', 'Planejado', 'Data Planejada']));
+    const horaInicio = getVal(['HORA INICIO', 'Hora Inicio', 'hora inicio', 'Hora Início']);
+    dataPrevista = combinarDataHora(dataPrevista, horaInicio);
+    
+    let dataReal = formatarData(getVal(['TÉRMINO', 'término', 'termino', 'Data Real', 'dataReal', 'Data Conclusão', 'Data Conclusao', 'Conclusão', 'Conclusao', 'Realizado', 'Executado', 'Fim', 'Data de Término', 'Data de Termino', 'Data Fim', 'Data Final', 'End']));
+    const horaTermino = getVal(['HORA TÉRMINO', 'Hora Término', 'hora término', 'HORA TERMICA', 'Hora Termica']);
+    dataReal = combinarDataHora(dataReal, horaTermino);
+
+    let rawStatus = getVal(['STATUS', 'Status', 'status', 'SITUAÇÃO', 'Situação', 'situacao', 'Estado', 'estado']);
+    let status = 'pendente';
+    const now = new Date();
+    const statusStr = rawStatus ? String(rawStatus).toLowerCase() : '';
+    const hasDataReal = dataReal !== null && dataReal !== undefined;
+    const isExplicitlyConcluido = statusStr.includes('conclu');
+
+    if (hasDataReal || isExplicitlyConcluido) {
+        status = 'concluido';
+        if (dataReal && dataPrevista && new Date(dataReal) > new Date(dataPrevista)) {
+            status = 'concluido_atraso';
+        }
+    } else {
+        if (dataPrevista && new Date(dataPrevista) < now) {
+            status = 'atrasado';
+        } else if (statusStr.includes('andamento')) {
+            status = 'em_andamento';
+        } else {
+            status = 'pendente';
+        }
+        if (statusStr.includes('atras')) {
+            status = 'atrasado';
+        }
+    }
+
+    etapasValidadas.push({
+      nome: nome,
+      area: getVal(['ÁREA', 'área', 'area', 'Área']) || '',
+      responsavel: getVal(['ATRIBUÍDO PARA', 'atribuído para', 'atribuido para', 'Responsável', 'responsavel', 'Responsavel', 'Owner']) || '',
+      dataPrevista: dataPrevista,
+      dataReal: dataReal,
+      status: status,
+      empresaId: null, // Será preenchido depois
+      empresaNome: null // Será preenchido depois
+    });
+  });
+
+  return etapasValidadas;
 }
