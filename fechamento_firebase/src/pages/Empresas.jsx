@@ -657,6 +657,7 @@ export default function Empresas() {
                 <div>
                   <h3 className="font-semibold text-slate-800">{empresa.nome}</h3>
                   {empresa.cnpj && <p className="text-sm text-slate-500">{empresa.cnpj}</p>}
+                  <p className="text-xs text-slate-400 mt-1 font-mono" title="ID da Empresa">ID: {empresa.id}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
