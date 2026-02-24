@@ -3,7 +3,7 @@ import { getFirestore, doc, onSnapshot, updateDoc, collection } from 'firebase/f
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { getPeriodos, getEtapas, getResponsaveis } from '../services/database';
-import { Bell, Clock, AlertTriangle, Settings, Mail, Send, X, Mailbox } from 'lucide-react';
+import { Bell, Clock, AlertTriangle, Settings, Mail, Send, X, Mailbox, ChevronDown, ChevronUp } from 'lucide-react';
 import { format, differenceInDays } from 'date-fns';
 import { checkPermission } from './permissionUtils';
 
@@ -19,6 +19,8 @@ export default function Notificacoes() {
   const [responsaveisMap, setResponsaveisMap] = useState({});
   const [usersMap, setUsersMap] = useState({});
   const [showEmailModal, setShowEmailModal] = useState(false);
+  const [showProximas, setShowProximas] = useState(false);
+  const [showAtrasadas, setShowAtrasadas] = useState(false);
   const [config, setConfig] = useState({
     emailAlerts: false,
     delayAlerts: true,
@@ -388,75 +390,97 @@ export default function Notificacoes() {
         <div className="space-y-6">
           {/* Próximas do prazo */}
           <div className="bg-white rounded-xl shadow-sm p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Clock className="w-5 h-5 text-yellow-500" />
-              <h2 className="text-lg font-semibold text-slate-800">
-                Etapas Próximas do Prazo ({etapasProximasPrazo.length})
-              </h2>
-            </div>
-            <p className="text-sm text-slate-500 mb-4">Etapas que vencem nos próximos {config.daysNotice} dias</p>
-            
-            {etapasProximasPrazo.length === 0 ? (
-              <p className="text-slate-500 text-center py-6">Nenhuma etapa próxima do prazo</p>
-            ) : (
-              <div className="space-y-2">
-                {etapasProximasPrazo.map(etapa => {
-                  const dias = differenceInDays(new Date(etapa.dataPrevista), hoje);
-                  return (
-                    <div key={etapa.id} className="flex items-center justify-between p-4 bg-yellow-50 rounded-lg">
-                      <div>
-                        <p className="font-medium text-slate-800">{etapa.nome}</p>
-                        <p className="text-sm text-slate-500">{etapa.responsavel || 'Sem responsável'}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm font-medium text-yellow-700">
-                          {dias === 0 ? 'Vence hoje' : `Vence em ${dias} dia${dias > 1 ? 's' : ''}`}
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          {format(new Date(etapa.dataPrevista), 'dd/MM/yyyy')}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })}
+            <div 
+              className="flex items-center justify-between mb-4 cursor-pointer"
+              onClick={() => setShowProximas(!showProximas)}
+            >
+              <div className="flex items-center gap-2">
+                <Clock className="w-5 h-5 text-yellow-500" />
+                <h2 className="text-lg font-semibold text-slate-800">
+                  Etapas Próximas do Prazo ({etapasProximasPrazo.length})
+                </h2>
               </div>
+              {showProximas ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
+            </div>
+            
+            {showProximas && (
+              <>
+                <p className="text-sm text-slate-500 mb-4">Etapas que vencem nos próximos {config.daysNotice} dias</p>
+                
+                {etapasProximasPrazo.length === 0 ? (
+                  <p className="text-slate-500 text-center py-6">Nenhuma etapa próxima do prazo</p>
+                ) : (
+                  <div className="space-y-2">
+                    {etapasProximasPrazo.map(etapa => {
+                      const dias = differenceInDays(new Date(etapa.dataPrevista), hoje);
+                      return (
+                        <div key={etapa.id} className="flex items-center justify-between p-4 bg-yellow-50 rounded-lg">
+                          <div>
+                            <p className="font-medium text-slate-800">{etapa.nome}</p>
+                            <p className="text-sm text-slate-500">{etapa.responsavel || 'Sem responsável'}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-medium text-yellow-700">
+                              {dias === 0 ? 'Vence hoje' : `Vence em ${dias} dia${dias > 1 ? 's' : ''}`}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              {format(new Date(etapa.dataPrevista), 'dd/MM/yyyy')}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
             )}
           </div>
 
           {/* Atrasadas */}
           <div className="bg-white rounded-xl shadow-sm p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <AlertTriangle className="w-5 h-5 text-red-500" />
-              <h2 className="text-lg font-semibold text-slate-800">
-                Etapas Atrasadas ({etapasAtrasadas.length})
-              </h2>
-            </div>
-            <p className="text-sm text-slate-500 mb-4">Etapas com prazo vencido</p>
-            
-            {etapasAtrasadas.length === 0 ? (
-              <p className="text-slate-500 text-center py-6">Nenhuma etapa atrasada</p>
-            ) : (
-              <div className="space-y-2">
-                {etapasAtrasadas.map(etapa => {
-                  const dias = differenceInDays(hoje, new Date(etapa.dataPrevista));
-                  return (
-                    <div key={etapa.id} className="flex items-center justify-between p-4 bg-red-50 rounded-lg">
-                      <div>
-                        <p className="font-medium text-slate-800">{etapa.nome}</p>
-                        <p className="text-sm text-slate-500">{etapa.responsavel || 'Sem responsável'}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm font-medium text-red-700">
-                          {dias} dia{dias > 1 ? 's' : ''} de atraso
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          Prevista: {format(new Date(etapa.dataPrevista), 'dd/MM/yyyy')}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })}
+            <div 
+              className="flex items-center justify-between mb-4 cursor-pointer"
+              onClick={() => setShowAtrasadas(!showAtrasadas)}
+            >
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-red-500" />
+                <h2 className="text-lg font-semibold text-slate-800">
+                  Etapas Atrasadas ({etapasAtrasadas.length})
+                </h2>
               </div>
+              {showAtrasadas ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
+            </div>
+            
+            {showAtrasadas && (
+              <>
+                <p className="text-sm text-slate-500 mb-4">Etapas com prazo vencido</p>
+                
+                {etapasAtrasadas.length === 0 ? (
+                  <p className="text-slate-500 text-center py-6">Nenhuma etapa atrasada</p>
+                ) : (
+                  <div className="space-y-2">
+                    {etapasAtrasadas.map(etapa => {
+                      const dias = differenceInDays(hoje, new Date(etapa.dataPrevista));
+                      return (
+                        <div key={etapa.id} className="flex items-center justify-between p-4 bg-red-50 rounded-lg">
+                          <div>
+                            <p className="font-medium text-slate-800">{etapa.nome}</p>
+                            <p className="text-sm text-slate-500">{etapa.responsavel || 'Sem responsável'}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-medium text-red-700">
+                              {dias} dia{dias > 1 ? 's' : ''} de atraso
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              Prevista: {format(new Date(etapa.dataPrevista), 'dd/MM/yyyy')}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
