@@ -183,7 +183,8 @@ export default function Relatorios() {
 
   // Adiciona a função processData que está faltando neste arquivo
   const processData = (data) => {
-    if (!Array.isArray(data)) return [];
+    if (!data) return [];
+    const dataArray = Array.isArray(data) ? data : Object.values(data);
     const etapasValidadas = [];
   
     const formatarData = (valor) => {
@@ -276,7 +277,7 @@ export default function Relatorios() {
       return localDate.toISOString();
     };
 
-    data.forEach((row) => {
+    dataArray.forEach((row) => {
       const getVal = (keys) => {
         const normalize = (k) => k ? String(k).toLowerCase().replace(/\s+/g, ' ').trim() : '';
         for (const k of keys) {
