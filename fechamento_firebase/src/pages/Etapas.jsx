@@ -26,7 +26,7 @@ export default function Etapas() {
   const [filtros, setFiltros] = useState({ area: '', responsavel: '', status: '' });
   const [syncing, setSyncing] = useState(false);
   const [loadingData, setLoadingData] = useState(false);
-  const [isSyncingRef] = useState({ current: false }); // Usando state como ref estável ou useRef
+  const isSyncingRef = useRef(false);
   const [nextSync, setNextSync] = useState(15);
   const [autoSyncing, setAutoSyncing] = useState(false);
 
@@ -39,6 +39,7 @@ export default function Etapas() {
 
   const [form, setForm] = useState({
     nome: '',
+    codigo: '',
     descricao: '',
     area: '',
     responsavel: '',
@@ -93,7 +94,7 @@ export default function Etapas() {
           data.forEach(p => {
             const key = `${p.mes}-${p.ano}`;
             if (!allPeriodsMap.has(key)) {
-              allPeriodsMap.set(key, { mes: p.mes, ano: p.ano, id: key });
+              allPeriodsMap.set(key, { ...p, id: key, realId: p.id });
             }
           });
           
@@ -253,9 +254,9 @@ export default function Etapas() {
             });
 
             // Adiciona operações de exclusão para etapas que não estão mais na planilha
-            currentDocs.forEach(doc => {
-              if (!keptIds.has(doc.id)) {
-                operations.push({ type: 'delete', ref: doc(etapasRef, doc.id) });
+            currentDocs.forEach(d => {
+              if (!keptIds.has(d.id)) {
+                operations.push({ type: 'delete', ref: doc(etapasRef, d.id) });
               }
             });
 
@@ -328,28 +329,34 @@ export default function Etapas() {
       return;
     }
 
-    // Busca o ID real do período
-    const db = getFirestore();
-    const periodsSnapshot = await getDocs(collection(db, 'tenants', empresaAtual.id, 'periodos'));
-    const periodsData = periodsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-    const realPeriod = periodsData.find(p => p.mes === periodoSelecionado.mes && p.ano === periodoSelecionado.ano);
+    let realPeriodId = periodoSelecionado.realId;
 
-    if (!realPeriod) {
+    if (!realPeriodId) {
+      const db = getFirestore();
+      const periodsSnapshot = await getDocs(collection(db, 'tenants', empresaAtual.id, 'periodos'));
+      const periodsData = periodsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      const found = periodsData.find(p => parseInt(p.mes) === parseInt(periodoSelecionado.mes) && parseInt(p.ano) === parseInt(periodoSelecionado.ano));
+      if (found) realPeriodId = found.id;
+    }
+
+    if (!realPeriodId) {
       alert("Período não encontrado.");
       return;
     }
 
-    if (etapaEditando) {
-      await atualizarEtapa(empresaAtual.id, realPeriod.id, etapaEditando.originalId, form);
-
+    if (etapaEditando && (etapaEditando.id || etapaEditando.originalId)) {
+      await atualizarEtapa(empresaAtual.id, realPeriodId, etapaEditando.id || etapaEditando.originalId, form);
     } else {
-      await criarEtapa(empresaAtual.id, realPeriod.id, form);
+      // Se não tem ID (veio da planilha e não está no banco), cria uma nova
+      const dados = { ...form };
+      await criarEtapa(empresaAtual.id, realPeriodId, dados);
     }
     
     setShowModal(false);
     setEtapaEditando(null);
     setForm({
       nome: '',
+      codigo: '',
       descricao: '',
       area: '',
       responsavel: '',
@@ -364,6 +371,7 @@ export default function Etapas() {
     setEtapaEditando(etapa);
     setForm({
       nome: etapa.nome || '',
+      codigo: etapa.codigo || '',
       descricao: etapa.descricao || '',
       area: etapa.area || '',
       responsavel: etapa.responsavel || '',
@@ -379,7 +387,13 @@ export default function Etapas() {
     if (window.confirm('Tem certeza que deseja excluir esta etapa?')) {
       const empId = etapa.empresaId;
       const perId = etapa.periodoId;
-      const id = etapa.originalId;
+      const id = etapa.id || etapa.originalId;
+      
+      if (!id) {
+        alert("Esta etapa ainda não foi salva no banco de dados e não pode ser excluída por aqui. Exclua na planilha e sincronize.");
+        return;
+      }
+
       await deletarEtapa(empId, perId, id);
     }
   };
@@ -496,7 +510,6 @@ export default function Etapas() {
         <table className="w-full">
           <thead className="bg-slate-50">
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">D+</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Código</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Etapa</th>
               {viewAllCompanies && <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Empresa</th>}
@@ -508,7 +521,6 @@ export default function Etapas() {
               <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Data Real</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Hora Real</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Status</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">Ações</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -521,9 +533,6 @@ export default function Etapas() {
             ) : (
               etapasFiltradas.map((etapa, index) => (
                 <tr key={etapa.id || `etapa-${index}`} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 text-sm font-medium text-slate-800">
-                    D+{etapa.ordem || index}
-                  </td>
                   <td className="px-4 py-3 text-sm text-slate-600">{etapa.codigo || '-'}</td>
                   <td className="px-4 py-3 text-sm text-slate-800">{etapa.nome}</td>
                   {viewAllCompanies && <td className="px-4 py-3 text-sm text-slate-600">{etapa.empresaNome}</td>}
@@ -543,25 +552,9 @@ export default function Etapas() {
                     {etapa.dataReal ? new Date(etapa.dataReal).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '-'}
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`text-xs px-2 py-1 rounded-full text-white ${getStatusColor(etapa.status)}`}>
+                    <span className={`inline-flex px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm whitespace-nowrap ${getStatusColor(etapa.status)}`}>
                       {getStatusLabel(etapa.status)}
                     </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => handleEditar(etapa)}
-                        className="p-1 text-slate-400 hover:text-primary-600"
-                      >
-                        <Edit2 className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDeletar(etapa)}
-                        className="p-1 text-slate-400 hover:text-red-600"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
                   </td>
                 </tr>
               ))
@@ -654,6 +647,16 @@ export default function Etapas() {
                   />
                 </div>
                 
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Código</label>
+                  <input
+                    type="text"
+                    value={form.codigo}
+                    onChange={(e) => setForm({ ...form, codigo: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+                  />
+                </div>
+
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Ordem (D+)</label>
                   <input

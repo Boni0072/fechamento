@@ -14,7 +14,6 @@ const PAGINAS_DISPONIVEIS = [
   { id: 'etapas', label: 'Etapas' },
   { id: 'importacao', label: 'Importação' },
   { id: 'relatorios', label: 'Relatórios' },
-  { id: 'historico', label: 'Histórico' },
   { id: 'cadastros', label: 'Cadastros' },
   { id: 'notificacoes', label: 'Notificações' },
   { id: 'fluxograma', label: 'Fluxograma' },

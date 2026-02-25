@@ -173,7 +173,7 @@ export default function Login() {
         email: newClientData.emailUser,
         cargo: 'Dono / Master',
         perfilAcesso: 'Master',
-        paginasAcesso: ['dashboard', 'empresas', 'etapas', 'importacao', 'relatorios', 'historico', 'cadastros', 'notificacoes', 'fluxograma', 'usuarios'],
+        paginasAcesso: ['dashboard', 'empresas', 'etapas', 'importacao', 'relatorios', 'cadastros', 'notificacoes', 'fluxograma', 'usuarios'],
         createdAt: new Date().toISOString()
       });
 
@@ -182,7 +182,7 @@ export default function Login() {
         empresaId: empresaId,
         email: newClientData.emailUser,
         perfilAcesso: 'Master',
-        paginasAcesso: ['dashboard', 'empresas', 'etapas', 'importacao', 'relatorios', 'historico', 'cadastros', 'notificacoes', 'fluxograma', 'usuarios']
+        paginasAcesso: ['dashboard', 'empresas', 'etapas', 'importacao', 'relatorios', 'cadastros', 'notificacoes', 'fluxograma', 'usuarios']
       });
 
       alert(`Cliente "${newClientData.nomeEmpresa}" criado com sucesso!\nUsuário: ${newClientData.emailUser}`);

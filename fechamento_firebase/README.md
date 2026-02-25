@@ -103,11 +103,6 @@ Configure as seguintes regras no Firebase Console:
 - Alertas de etapas atrasadas
 - Configurações de notificação
 
-### Histórico
-- Timeline de alterações
-- Tabela detalhada de auditoria
-- Registro de quem alterou e quando
-
 ### Importação em Massa
 - Upload de planilha Excel
 - Preview dos dados
@@ -136,7 +131,6 @@ src/
 │   ├── Empresas.jsx
 │   ├── Relatorios.jsx
 │   ├── Notificacoes.jsx
-│   ├── Historico.jsx
 │   ├── Importacao.jsx
 │   └── Login.jsx
 ├── services/         # Serviços

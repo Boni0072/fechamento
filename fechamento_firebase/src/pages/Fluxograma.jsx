@@ -404,7 +404,7 @@ export default function Fluxograma() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm h-[650px] flex flex-col overflow-hidden">
+      <div className="bg-white rounded-xl shadow-sm h-[calc(100vh-240px)] min-h-[650px] flex flex-col overflow-hidden">
         {etapas.length === 0 ? <p className="text-slate-500 text-center py-12">Nenhuma etapa cadastrada</p> : (
           <MemoizedTimeline 
             ref={timelineRef} 
@@ -518,18 +518,6 @@ export default function Fluxograma() {
               >
                 Fechar
               </button>
-              {!etapaSelecionada.dataReal && (
-                <button
-                  onClick={() => {
-                    handleConcluir(etapaSelecionada);
-                    setEtapaSelecionada(null);
-                  }}
-                  className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center justify-center gap-2"
-                >
-                  <Check className="w-4 h-4" />
-                  Concluir
-                </button>
-              )}
             </div>
           </div>
         </div>
@@ -600,6 +588,10 @@ function processData(data, existingSteps = []) {
     }
     if (typeof valor === 'string') {
       const v = valor.trim();
+      // Se já for ISO (termina em Z), retorna direto para evitar dupla conversão de fuso
+      if (v.endsWith('Z') && !isNaN(Date.parse(v))) {
+        return v;
+      }
       // 2. Formato DD/MM/AAAA HH:mm (Estrito BR)
       const dmy = v.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})(?:[\sT]+(\d{1,2}):(\d{2}))?/);
       if (dmy) {

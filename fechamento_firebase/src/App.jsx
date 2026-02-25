@@ -7,7 +7,6 @@ import Etapas from './pages/Etapas.jsx';
 import Relatorios from './pages/Relatorios.jsx';
 import Layout from './components/Layout.jsx';
 import Dashboard from './pages/Dashboard.jsx';
-import Historico from './pages/Historico.jsx';
 import Empresas from './pages/Empresas.jsx';
 import Cadastros from './pages/Cadastros.jsx';
 import Notificacoes from './pages/Notificacoes.jsx';
@@ -87,7 +86,6 @@ export const routesConfig = [
   { path: "/fluxograma", element: <Fluxograma />, requiredPage: "Fluxograma", label: "Fluxograma" },
   { path: "/etapas", element: <Etapas />, requiredPage: "Etapas", label: "Etapas" },
   { path: "/relatorios", element: <Relatorios />, requiredPage: "Relatorios", label: "Relatórios" },
-  { path: "/historico", element: <Historico />, requiredPage: "Historico", label: "Histórico" },
   { path: "/empresas", element: <Empresas />, requiredPage: "Empresas", label: "Empresas" },
   { path: "/cadastros", element: <Cadastros />, requiredPage: "Cadastros", label: "Cadastros" },
   { path: "/notificacoes", element: <Notificacoes />, requiredPage: "Notificacoes", label: "Notificações" },
