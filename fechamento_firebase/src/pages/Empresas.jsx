@@ -526,11 +526,18 @@ export default function Empresas() {
   };
 
   const handleOpenGlobalAppearance = async () => {
-    setSelectedEmpresaAppearance({ id: 'global', nome: 'Visão Consolidada' });
+    setSelectedEmpresaAppearance({ id: 'global', nome: 'Visão Consolidada (Pessoal)' });
     const db = getFirestore();
     try {
-        const docSnap = await getDoc(doc(db, 'system_settings', 'global_appearance'));
-        const data = docSnap.exists() ? docSnap.data() : {};
+        let data = {};
+        if (user?.id) {
+          const docSnap = await getDoc(doc(db, 'users_directory', user.id));
+          if (docSnap.exists()) {
+             const userData = docSnap.data();
+             data = userData.consolidatedAppearance || {};
+          }
+        }
+
         setAppearanceConfig({
           sidebarColor: data.sidebarColor || '#111827',
           sidebarTextColor: data.sidebarTextColor || '#ffffff',
@@ -555,9 +562,11 @@ export default function Empresas() {
       const db = getFirestore();
       
       if (selectedEmpresaAppearance.id === 'global') {
-         await setDoc(doc(db, 'system_settings', 'global_appearance'), {
-            ...appearanceConfig
-         }, { merge: true });
+         if (user?.id) {
+            await setDoc(doc(db, 'users_directory', user.id), {
+                consolidatedAppearance: appearanceConfig
+            }, { merge: true });
+         }
       } else {
          // Usar setDoc com merge: true é mais robusto que updateDoc.
          await setDoc(doc(db, 'tenants', selectedEmpresaAppearance.id), {

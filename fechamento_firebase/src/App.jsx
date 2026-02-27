@@ -56,6 +56,10 @@ const RotaProtegida = ({ children, requiredPage }) => {
   }
 
   const { user, loading } = auth;
+  
+  // Correção para o delay de troca de empresa:
+  // Tenta identificar o ID da empresa atual no contexto de autenticação.
+  const empresaKey = auth.empresaId || auth.empresaSelecionada?.id || auth.empresaSelecionada || auth.user?.empresaId;
 
   if (loading || (requiredPage && permissaoLoading)) {
     return (
@@ -76,7 +80,14 @@ const RotaProtegida = ({ children, requiredPage }) => {
   //   return <Navigate to="/" replace />;
   // }
 
-  return children;
+  // Ao usar o ID da empresa como 'key', o React forçará a recriação completa
+  // dos componentes filhos quando a empresa mudar, evitando que dados da empresa
+  // anterior fiquem visíveis enquanto os novos carregam.
+  return (
+    <div key={empresaKey} className="contents">
+      {children}
+    </div>
+  );
 };
 
 export const routesConfig = [

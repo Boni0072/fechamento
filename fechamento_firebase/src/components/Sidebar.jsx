@@ -75,17 +75,30 @@ export default function Sidebar() {
   const [showEmpresas, setShowEmpresas] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [imgError, setImgError] = useState(false);
-  const [logo, setLogo] = useState('/hunterDouglas.png');
-  const [theme, setTheme] = useState({
+
+  // Estado para controlar o carregamento da aparência
+  const [appearance, setAppearance] = useState({
+    logo: null,
+    theme: null,
+    loading: true // Começa como 'carregando' para evitar piscar o conteúdo padrão
+  });
+
+  const defaultAppearance = {
+    logo: '/hunterDouglas.png',
+    theme: {
     bg: '#111827',
     text: '#cbd5e1', // slate-300
     activeItem: '#ea580c' // orange-600
-  });
+    }
+  };
 
   // Listener para Aparência (Logo e Cores)
   useEffect(() => {
     const db = getFirestore();
     let unsubscribe = () => {};
+
+    // Inicia o carregamento sempre que a empresa mudar para evitar mostrar dados antigos
+    setAppearance(prev => ({ ...prev, loading: true }));
 
     if (empresaAtual?.id) {
       // Aparência da Empresa
@@ -93,37 +106,49 @@ export default function Sidebar() {
         if (docSnap.exists()) {
           const data = docSnap.data();
           if (data.appearance) {
-            setLogo(data.appearance.logo || '/hunterDouglas.png');
-            setTheme({
-              bg: data.appearance.sidebarColor || '#111827',
-              text: data.appearance.sidebarTextColor || '#cbd5e1',
-              activeItem: data.appearance.primaryColor || '#ea580c'
+            setAppearance({
+              logo: data.appearance.logo || defaultAppearance.logo,
+              theme: {
+                bg: data.appearance.sidebarColor || defaultAppearance.theme.bg,
+                text: data.appearance.sidebarTextColor || defaultAppearance.theme.text,
+                activeItem: data.appearance.primaryColor || defaultAppearance.theme.activeItem
+              },
+              loading: false
             });
           } else {
-             setLogo('/hunterDouglas.png');
-             setTheme({ bg: '#111827', text: '#cbd5e1', activeItem: '#ea580c' });
+             setAppearance({ ...defaultAppearance, loading: false });
           }
+        } else {
+          // Se o documento da empresa não existir, usa o padrão
+          setAppearance({ ...defaultAppearance, loading: false });
         }
       });
     } else {
-       // Aparência Global (Consolidado)
-       unsubscribe = onSnapshot(doc(db, 'system_settings', 'global_appearance'), (docSnap) => {
-         if (docSnap.exists()) {
-            const data = docSnap.data();
-            setLogo(data.logo || '/hunterDouglas.png');
-            setTheme({
-              bg: data.sidebarColor || '#111827',
-              text: data.sidebarTextColor || '#cbd5e1',
-              activeItem: data.primaryColor || '#ea580c'
-            });
-         } else {
-            setLogo('/hunterDouglas.png');
-            setTheme({ bg: '#111827', text: '#cbd5e1', activeItem: '#ea580c' });
-         }
-       });
+       // Aparência Global (Consolidado) - Agora por usuário
+       if (user?.id) {
+         unsubscribe = onSnapshot(doc(db, 'users_directory', user.id), (docSnap) => {
+           if (docSnap.exists()) {
+              const data = docSnap.data();
+              const app = data.consolidatedAppearance || {};
+              setAppearance({
+                logo: app.logo || defaultAppearance.logo,
+                theme: {
+                  bg: app.sidebarColor || defaultAppearance.theme.bg,
+                  text: app.sidebarTextColor || defaultAppearance.theme.text,
+                  activeItem: app.primaryColor || defaultAppearance.theme.activeItem
+                },
+                loading: false
+              });
+           } else {
+              setAppearance({ ...defaultAppearance, loading: false });
+           }
+         });
+       } else {
+          setAppearance({ ...defaultAppearance, loading: false });
+       }
     }
     return () => unsubscribe();
-  }, [empresaAtual?.id]);
+  }, [empresaAtual?.id, user?.id]);
 
   const nomeExibicao = user?.nome || user?.name || user?.displayName || user?.email || 'Usuário';
   const avatarUrl = user?.avatar || user?.photoURL;
@@ -135,6 +160,20 @@ export default function Sidebar() {
     setShowEmpresas(false);
   };
 
+  // Extrai os valores do estado de aparência para facilitar o uso
+  const { logo, theme, loading: appearanceLoading } = appearance;
+
+  // Se a aparência estiver carregando ou não estiver definida, mostra um sidebar "em branco" com um spinner
+  if (appearanceLoading || !theme) {
+    return (
+      <aside className={`${collapsed ? 'w-20' : 'w-64'} min-h-screen flex flex-col transition-all duration-300 bg-gray-900`}>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-400"></div>
+        </div>
+      </aside>
+    );
+  }
+
   return (
     <aside 
       className={`${collapsed ? 'w-20' : 'w-64'} min-h-screen flex flex-col transition-all duration-300`}
@@ -143,7 +182,6 @@ export default function Sidebar() {
       {/* Logo & Toggle */}
       <div className="p-4 border-b border-white/10 flex flex-col items-center relative">
         <img src={logo} alt="Logo Contábil" className="w-36 h-36 object-contain" />
-        
         {!collapsed && <h1 className="text-lg font-bold truncate mt-2" style={{ color: theme.text }}>Fechamento Contábil</h1>}
         <button 
           onClick={() => setCollapsed(!collapsed)}
