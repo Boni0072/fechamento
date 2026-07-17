@@ -653,7 +653,7 @@ export default function Empresas() {
               <div className="flex items-center gap-3">
                 <div className={`w-12 h-12 rounded-lg overflow-hidden shrink-0 ${empresa.appearance?.logo ? 'bg-white' : 'flex items-center justify-center'}`} style={{ border: '1px solid var(--border)', background: !empresa.appearance?.logo ? 'var(--surface-2)' : 'white' }}>
                   {empresa.appearance?.logo ? (
-                    <img src={empresa.appearance.logo} alt={empresa.nome} className="w-full h-full object-cover" />
+                    <img src={empresa.appearance.logo} alt={empresa.nome} className="w-full h-full object-cover object-center" />
                   ) : (
                     <Building2 className="w-6 h-6" style={{ color: 'var(--text-dim)' }} />
                   )}
@@ -955,7 +955,7 @@ export default function Empresas() {
               <div className="flex items-center gap-3">
                 {appearanceConfig.logo && (
                   <div className="w-10 h-10 rounded-lg bg-white overflow-hidden shrink-0" style={{ border: '1px solid var(--border)' }}>
-                    <img src={appearanceConfig.logo} alt="Logo" className="w-full h-full object-cover" />
+                    <img src={appearanceConfig.logo} alt="Logo" className="w-full h-full object-cover object-center" />
                   </div>
                 )}
                 <h3 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Aparência: {selectedEmpresaAppearance?.nome}</h3>
@@ -972,7 +972,7 @@ export default function Empresas() {
                 <div className="flex items-center gap-4">
                   <div className="w-20 h-20 rounded-lg flex items-center justify-center overflow-hidden relative group" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
                     {appearanceConfig.logo ? (
-                      <img src={appearanceConfig.logo} alt="Logo" className="w-full h-full object-contain" />
+                      <img src={appearanceConfig.logo} alt="Logo" className="w-full h-full object-cover object-center" />
                     ) : (
                       <ImageIcon className="w-8 h-8" style={{ color: 'var(--text-dim)' }} />
                     )}
