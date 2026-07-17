@@ -2,7 +2,7 @@
 
 Sistema completo para gestão e acompanhamento do fechamento contábil mensal, com fluxograma visual interativo, dashboard de indicadores e relatórios gerenciais.
 
-## Tecnologias
+## Tecnologias wew
 
 - **Frontend**: React 18 + Vite + Tailwind CSS
 - **Backend/Database**: Firebase (Authentication + Realtime Database)
