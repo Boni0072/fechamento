@@ -1,0 +1,14 @@
+.cert
+.git
+node_modules
+.DS_Store
+.env.local
+*.log
+.eslintcache
+dist
+build
+.next
+out
+pnpm-lock.yaml
+yarn.lock
+package-lock.json
