@@ -651,9 +651,9 @@ export default function Empresas() {
           >
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
-                <div className={`w-12 h-12 rounded-lg flex items-center justify-center shrink-0 overflow-hidden ${empresa.appearance?.logo ? 'bg-white' : ''}`} style={{ border: '1px solid var(--border)', background: !empresa.appearance?.logo ? 'var(--surface-2)' : 'white' }}>
+                <div className={`w-12 h-12 rounded-lg overflow-hidden shrink-0 ${empresa.appearance?.logo ? 'bg-white' : 'flex items-center justify-center'}`} style={{ border: '1px solid var(--border)', background: !empresa.appearance?.logo ? 'var(--surface-2)' : 'white' }}>
                   {empresa.appearance?.logo ? (
-                    <img src={empresa.appearance.logo} alt={empresa.nome} className="w-full h-full object-contain p-1" />
+                    <img src={empresa.appearance.logo} alt={empresa.nome} className="w-full h-full object-cover" />
                   ) : (
                     <Building2 className="w-6 h-6" style={{ color: 'var(--text-dim)' }} />
                   )}
@@ -748,8 +748,8 @@ export default function Empresas() {
           <div className="modal-content w-full max-w-md animate-slideIn">
             <div className="modal-header">
               {empresaEditando?.appearance?.logo && (
-                <div className="w-10 h-10 rounded-lg bg-white flex items-center justify-center overflow-hidden shrink-0" style={{ border: '1px solid var(--border)' }}>
-                  <img src={empresaEditando.appearance.logo} alt="Logo" className="w-full h-full object-contain p-0.5" />
+                <div className="w-10 h-10 rounded-lg bg-white overflow-hidden shrink-0" style={{ border: '1px solid var(--border)' }}>
+                  <img src={empresaEditando.appearance.logo} alt="Logo" className="w-full h-full object-cover" />
                 </div>
               )}
               <h3 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>{empresaEditando ? 'Editando' : 'Nova Empresa'}{nome ? `: ${nome}` : ''}</h3>
@@ -814,8 +814,8 @@ export default function Empresas() {
               <div className="modal-header sticky top-0 z-20">
                 <div className="flex items-center gap-3">
                   {configEmpresa?.appearance?.logo && (
-                    <div className="w-8 h-8 rounded bg-white flex items-center justify-center overflow-hidden shrink-0" style={{ border: '1px solid var(--border)' }}>
-                      <img src={configEmpresa.appearance.logo} alt="Logo" className="w-full h-full object-contain p-0.5" />
+                    <div className="w-8 h-8 rounded bg-white overflow-hidden shrink-0" style={{ border: '1px solid var(--border)' }}>
+                      <img src={configEmpresa.appearance.logo} alt="Logo" className="w-full h-full object-cover" />
                     </div>
                   )}
                   <h3 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Conexão Planilhas: {configEmpresa?.nome}</h3>
@@ -954,8 +954,8 @@ export default function Empresas() {
             <div className="modal-header">
               <div className="flex items-center gap-3">
                 {appearanceConfig.logo && (
-                  <div className="w-10 h-10 rounded-lg bg-white flex items-center justify-center overflow-hidden shrink-0" style={{ border: '1px solid var(--border)' }}>
-                    <img src={appearanceConfig.logo} alt="Logo" className="w-full h-full object-contain p-0.5" />
+                  <div className="w-10 h-10 rounded-lg bg-white overflow-hidden shrink-0" style={{ border: '1px solid var(--border)' }}>
+                    <img src={appearanceConfig.logo} alt="Logo" className="w-full h-full object-cover" />
                   </div>
                 )}
                 <h3 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Aparência: {selectedEmpresaAppearance?.nome}</h3>

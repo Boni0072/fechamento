@@ -45,7 +45,7 @@ export default function Sidebar() {
       <div className="relative flex flex-col items-center text-center py-8">
         <div className={`${isCollapsed ? 'w-20 h-20' : 'w-36 h-36'} rounded-[44px] bg-[var(--surface)] flex items-center justify-center overflow-hidden shrink-0 shadow-sm border border-[var(--border)] mb-4 transition-all duration-200`}>
           {empresaAtual?.appearance?.logo ?
-            (<img src={empresaAtual.appearance.logo} alt="Logo" className={`${isCollapsed ? 'p-3' : 'p-6'} w-full h-full object-contain transition-all duration-200`} />) :
+            (<img src={empresaAtual.appearance.logo} alt="Logo" className="w-full h-full object-cover transition-all duration-200" />) :
             (<Building2 className={`${isCollapsed ? 'w-10 h-10' : 'w-20 h-20'} text-[var(--text-muted)] transition-all duration-200`} />)
           }
         </div>
