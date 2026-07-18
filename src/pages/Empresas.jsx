@@ -5,8 +5,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { firestore, db as rtdb } from '../firebase';
 import { usePermissao } from '../hooks/usePermissao';
 import { checkPermission } from './permissionUtils';
-import { Plus, Building2, Check, FileSpreadsheet, RefreshCw, Trash2, Pencil, Palette, Upload, Image as ImageIcon } from 'lucide-react';
+import { Plus, Building2, Check, FileSpreadsheet, RefreshCw, Trash2, Pencil, Palette, Upload, Image as ImageIcon, Mail } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { initiate_outlook_auth } from '../services/outlookAuthService';
 
 export default function Empresas() {
   const { empresas, empresaAtual, selecionarEmpresa, criarEmpresa, user } = useAuth();
@@ -57,6 +58,15 @@ export default function Empresas() {
     fontSize: 'normal',
     logo: ''
   });
+  const [showOutlookModal, setShowOutlookModal] = useState(false);
+  const [outlookEmpresa, setOutlookEmpresa] = useState(null);
+  const [outlookFolder, setOutlookFolder] = useState('');
+  const [outlookLoading, setOutlookLoading] = useState(false);
+  const [outlookError, setOutlookError] = useState('');
+  const [outlookFolders, setOutlookFolders] = useState([]);
+  const [outlookFoldersLoading, setOutlookFoldersLoading] = useState(false);
+  const [outlookAccessToken, setOutlookAccessToken] = useState(null);
+  const [outlookUserEmail, setOutlookUserEmail] = useState('');
 
   // Função auxiliar para redimensionar imagem (Logo)
   const resizeImage = (file) => {
@@ -350,6 +360,52 @@ export default function Empresas() {
     // Busca dados atualizados automaticamente se houver ID
     if (id) {
       fetchDataFromGoogle(id);
+    }
+  };
+
+  const handleOpenOutlookModal = (e, empresa) => {
+    e.stopPropagation();
+    setOutlookEmpresa(empresa);
+    setOutlookFolder(empresa.outlookFolderId || '');
+    setOutlookUserEmail(empresa.outlookUserEmail || '');
+    setOutlookError('');
+    setOutlookFolders([]);
+    setOutlookAccessToken(null);
+    setShowOutlookModal(true);
+  };
+
+  const handleStartOutlookAuth = () => {
+    try {
+      initiate_outlook_auth();
+    } catch (err) {
+      setOutlookError(err.message);
+    }
+  };
+
+  const handleSaveOutlookFolder = async (e) => {
+    e.preventDefault();
+    if (!outlookEmpresa || !outlookFolder) return;
+
+    setOutlookLoading(true);
+    setOutlookError('');
+    try {
+      await setDoc(doc(firestore, 'tenants', outlookEmpresa.id), {
+        outlookFolderId: outlookFolder,
+        outlookUserEmail: outlookUserEmail,
+        outlookConnected: true,
+        outlookProvider: 'microsoft-oauth2',
+        outlookConnectedAt: new Date().toISOString()
+      }, { merge: true });
+
+      setShowOutlookModal(false);
+      setOutlookEmpresa(null);
+      setOutlookFolder('');
+      setOutlookUserEmail('');
+    } catch (err) {
+      console.error('Erro ao salvar pasta Outlook:', err);
+      setOutlookError(err.message || 'Erro ao salvar a conexão Outlook.');
+    } finally {
+      setOutlookLoading(false);
     }
   };
 
@@ -702,6 +758,17 @@ export default function Empresas() {
                   <RefreshCw className={`w-5 h-5 ${syncingId === empresa.id ? 'animate-spin' : ''}`} />
                 </button>
 
+                <button
+                  onClick={(e) => handleOpenOutlookModal(e, empresa)}
+                  className={`p-2 rounded-lg transition-colors ${
+                    empresa.outlookFolder 
+                      ? 'text-[var(--warning)] bg-[var(--warning-soft)]' 
+                      : 'text-[var(--text-dim)]'
+                  }`}
+                  title={empresa.outlookFolder ? `Pasta Outlook: ${empresa.outlookFolder}` : "Conectar pasta Outlook"}
+                >
+                  <Mail className="w-5 h-5" />
+                </button>
                 <button
                   onClick={(e) => handleOpenConfig(e, empresa)}
                   className={`p-2 rounded-lg transition-colors ${
@@ -1057,6 +1124,92 @@ export default function Empresas() {
                 >
                   {loading ? 'Salvando...' : 'Salvar Configuração'}
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showOutlookModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-fadeIn">
+          <div className="modal-content w-full max-w-md">
+            <div className="modal-header">
+              <h3 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>Conectar Outlook</h3>
+              <button onClick={() => setShowOutlookModal(false)} className="text-[var(--text-dim)] hover:text-[var(--text)]">
+                <Trash2 className="w-5 h-5 rotate-45" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveOutlookFolder} className="modal-body space-y-6">
+              {!outlookUserEmail ? (
+                <div className="space-y-4">
+                  <p style={{ color: 'var(--text-muted)' }} className="text-sm">
+                    Clique em "Conectar com Outlook" para autorizar esta aplicação de forma segura. Sua senha não será armazenada.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleStartOutlookAuth}
+                    className="btn btn-primary w-full"
+                  >
+                    Conectar com Outlook
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 p-3 rounded" style={{ backgroundColor: 'var(--surface)' }}>
+                    <Check className="w-5 h-5" style={{ color: 'var(--primary)' }} />
+                    <div>
+                      <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>Conectado</p>
+                      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{outlookUserEmail}</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="form-label">Selecione a pasta para sincronizar</label>
+                    <div className="max-h-48 overflow-auto rounded border border-[var(--border)] bg-[var(--surface)] p-2">
+                      {outlookFolders.length > 0 ? (
+                        outlookFolders.map((folder) => (
+                          <label key={folder.id} className="flex items-center gap-2 py-2 text-sm cursor-pointer">
+                            <input
+                              type="radio"
+                              name="outlookFolder"
+                              value={folder.id}
+                              checked={outlookFolder === folder.id}
+                              onChange={(e) => setOutlookFolder(e.target.value)}
+                            />
+                            <span>{folder.displayName}</span>
+                          </label>
+                        ))
+                      ) : (
+                        <p className="text-xs text-center py-2" style={{ color: 'var(--text-muted)' }}>Carregando pastas...</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {outlookError && (
+                <div className="alert alert-danger">
+                  {outlookError}
+                </div>
+              )}
+
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  onClick={() => setShowOutlookModal(false)}
+                  className="btn btn-secondary flex-1"
+                >
+                  Cancelar
+                </button>
+                {outlookUserEmail && (
+                  <button
+                    type="submit"
+                    disabled={outlookLoading || !outlookFolder}
+                    className="btn btn-primary flex-1"
+                  >
+                    {outlookLoading ? 'Salvando...' : 'Salvar'}
+                  </button>
+                )}
               </div>
             </form>
           </div>

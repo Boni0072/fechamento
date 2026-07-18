@@ -11,6 +11,7 @@ import Empresas from './pages/Empresas.jsx';
 import Cadastros from './pages/Cadastros.jsx';
 import Notificacoes from './pages/Notificacoes.jsx';
 import Importacao from './pages/Importacao.jsx';
+import OutlookCallback from './pages/OutlookCallback.jsx';
 
 const components = {
   "/": <Dashboard />,
@@ -24,6 +25,7 @@ const components = {
   "/cadastros": <Cadastros />,
   "/notificacoes": <Notificacoes />,
   "/importacao": <Importacao />,
+  "/auth/outlook/callback": <OutlookCallback />,
 };
 
 export const routesConfig = routesMetadata.map(route => ({

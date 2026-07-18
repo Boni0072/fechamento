@@ -676,11 +676,11 @@ export default function Fluxograma() {
                             type="button"
                             onClick={() => {
                               setResponsavelDetalhe(isSelected ? null : item.responsavel);
-                              setShowResponsavelDetalheModal(true);
+                              setShowResponsavelDetalheModal(isSelected ? false : true);
                             }}
-                            className={`w-full flex items-center justify-between gap-2 p-3 rounded-2xl border transition-all ${isSelected ? 'bg-blue-50 border-blue-200' : 'bg-white border-slate-200 hover:bg-slate-100'}`}
+                            className={`w-full flex items-center justify-between gap-2 p-3 rounded-2xl border transition-all ${isSelected ? 'bg-blue-600 border-blue-700 shadow-inner' : 'bg-white border-slate-200 hover:bg-slate-100'}`}
                           >
-                            <div className="flex items-center gap-3 text-left">
+                            <div className={`flex items-center gap-3 text-left ${isSelected ? 'text-white' : ''}`}>
                               <span className="w-3 h-3 rounded-full" style={{ backgroundColor: ['#ef4444', '#f97316', '#3b82f6', '#14b8a6', '#8b5cf6', '#f59e0b', '#0f766e'][index % 7] }} />
                               <div>
                                 <p className="text-sm font-semibold text-slate-900">{item.responsavel}</p>

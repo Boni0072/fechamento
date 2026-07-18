@@ -12,7 +12,6 @@ import Notificacoes from './pages/Notificacoes.jsx';
 import Importacao from './pages/Importacao.jsx';
 import Login from './pages/Login.jsx';
 import Diagnostico from './pages/Diagnostico.jsx';
-import ImobilizadoEmAndamento from './pages/ImobilizadoEmAndamento.jsx';
 import { useAuth } from './contexts/AuthContext';
 import { usePermissao } from './hooks/usePermissao';
 
@@ -101,7 +100,6 @@ export const routesConfig = [
   { path: "/empresas", element: <Empresas />, requiredPage: "Empresas", label: "Empresas" },
   { path: "/notificacoes", element: <Notificacoes />, requiredPage: "Notificacoes", label: "Notificações" },
   { path: "/importacao", element: <Importacao />, requiredPage: "Importacao", label: "Importação" },
-  { path: "/imobilizado", element: <ImobilizadoEmAndamento />, requiredPage: null, label: "Imobilizado" },
 ];
 
 const App = () => {

@@ -22,7 +22,6 @@ const paginas = [
   { path: '/fluxograma', label: 'Fluxograma', icon: GitMerge },
   { path: '/etapas', label: 'Etapas', icon: ListChecks },
   { path: '/relatorios', label: 'Relatórios', icon: BarChart3 },
-  { path: '/imobilizado', label: 'Imobilizado', icon: Archive },
   { path: '/notificacoes', label: 'Notificações', icon: Bell },
   { path: '/importacao', label: 'Importação', icon: Upload },
   { path: '/empresas', label: 'Empresas', icon: Building2 },

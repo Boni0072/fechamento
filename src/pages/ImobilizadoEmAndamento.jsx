@@ -14,6 +14,13 @@ export default function ImobilizadoEmAndamento() {
   const TOKEN_TYPE = '0'; // 0 = AAD, 1 = Embed
 
   useEffect(() => {
+    // Adiciona verificação para configuração de exemplo
+    if (EMBED_ACCESS_TOKEN === 'YOUR_EMBED_ACCESS_TOKEN' || EMBED_URL === 'YOUR_EMBED_URL') {
+      setError('A integração com o Power BI ainda não foi configurada. É necessário fornecer as credenciais de acesso no código-fonte.');
+      setLoading(false);
+      return;
+    }
+
     let isMounted = true;
 
     const loadPowerBI = async () => {

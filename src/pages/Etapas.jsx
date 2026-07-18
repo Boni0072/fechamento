@@ -25,6 +25,8 @@ export default function Etapas() {
   const [etapaEditando, setEtapaEditando] = useState(null);
   const [etapaDetalhe, setEtapaDetalhe] = useState(null); // State for details modal
   const [observacaoModal, setObservacaoModal] = useState(''); // State for observation text in modal
+  const [pontoModal, setPontoModal] = useState(null); // 'positivo' | 'negativo' | null
+  const [pontoAlvo, setPontoAlvo] = useState(null); // 'responsavel' | 'executor' | null
   const [filtros, setFiltros] = useState({ area: '', responsavel: '', status: '' });
   const [searchTerm, setSearchTerm] = useState('');
   const [loadingData, setLoadingData] = useState(false);
@@ -258,8 +260,30 @@ export default function Etapas() {
     const snapshot = await get(tabelaRef);
     const dataArray = [...(snapshot.val() || [])];
     dataArray[etapaDetalhe._originalIndex]['Observações'] = observacaoModal;
+    
+    if (pontoModal && pontoAlvo) {
+      const pontoPrincipal = pontoModal === 'positivo' ? 'Positivo' : 'Negativo';
+      const pontoOposto = pontoModal === 'positivo' ? 'Negativo' : 'Positivo';
+      const nomeAlvo = pontoAlvo === 'responsavel' ? etapaDetalhe.responsavel : etapaDetalhe.executadoPor;
+      const nomeOutro = pontoAlvo === 'responsavel' ? etapaDetalhe.executadoPor : etapaDetalhe.responsavel;
+
+      // Ponto para o alvo selecionado
+      dataArray[etapaDetalhe._originalIndex]['PONTO'] = pontoPrincipal;
+      dataArray[etapaDetalhe._originalIndex]['PONTO_ALVO'] = nomeAlvo || '';
+      dataArray[etapaDetalhe._originalIndex]['PONTO_TIPO'] = pontoAlvo;
+
+      // Ponto oposto para o outro (se existir e for diferente)
+      if (nomeOutro && nomeOutro !== nomeAlvo) {
+        dataArray[etapaDetalhe._originalIndex]['PONTO_OPOSTO'] = pontoOposto;
+        dataArray[etapaDetalhe._originalIndex]['PONTO_OPOSTO_ALVO'] = nomeOutro;
+        dataArray[etapaDetalhe._originalIndex]['PONTO_OPOSTO_TIPO'] = pontoAlvo === 'responsavel' ? 'executor' : 'responsavel';
+      }
+    }
+    
     await set(tabelaRef, dataArray);
     setEtapaDetalhe(null); // Close modal
+    setPontoModal(null);
+    setPontoAlvo(null);
   };
 
   const formatDateForInput = (isoDate) => {
@@ -702,47 +726,219 @@ export default function Etapas() {
       {etapaDetalhe && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-fadeIn">
           <div className="modal-content w-full max-w-2xl">
-            <div className="modal-header">
-              <div>
-                <h3 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>
-                  Detalhes da Etapa: {etapaDetalhe.nome}
-                </h3>
-                <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{etapaDetalhe.codigo || 'Sem código'}</p>
+            <div className="flex items-center justify-between p-5" style={{ borderBottom: '1px solid var(--border)' }}>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg flex items-center justify-center text-lg font-bold" style={{ background: 'var(--accent-soft)', color: 'var(--accent)', fontFamily: 'var(--font-display)' }}>
+                  {etapaDetalhe.nome?.charAt(0)?.toUpperCase() || '?'}
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold" style={{ fontFamily: 'var(--font-display)', color: 'var(--text)' }}>
+                    {etapaDetalhe.nome}
+                  </h3>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{etapaDetalhe.codigo ? `Código: ${etapaDetalhe.codigo}` : 'Sem código'}</p>
+                </div>
               </div>
-              <button onClick={() => setEtapaDetalhe(null)} className="p-1 rounded">
-                <X className="w-5 h-5" style={{ color: 'var(--text-dim)' }} />
+              <button onClick={() => setEtapaDetalhe(null)} className="p-1.5 rounded-lg transition-colors" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                <X className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
               </button>
             </div>
             
-            <div className="modal-body max-h-[70vh] overflow-y-auto custom-scrollbar">
-                <div className="grid grid-cols-3 gap-4 text-sm">
-                    <div className="p-3 rounded-lg" style={{ background: 'var(--surface-2)' }}><strong className="block text-xs" style={{ color: 'var(--text-muted)' }}>Área:</strong> {etapaDetalhe.area || '-'}</div>
-                    <div className="p-3 rounded-lg" style={{ background: 'var(--surface-2)' }}><strong className="block text-xs" style={{ color: 'var(--text-muted)' }}>Responsável:</strong> {etapaDetalhe.responsavel || '-'}</div>
-                    <div className="p-3 rounded-lg" style={{ background: 'var(--surface-2)' }}><strong className="block text-xs" style={{ color: 'var(--text-muted)' }}>Executado Por:</strong> {etapaDetalhe.executadoPor || '-'}</div>
-                    <div className="p-3 rounded-lg" style={{ background: 'var(--surface-2)' }}><strong className="block text-xs" style={{ color: 'var(--text-muted)' }}>Data Prevista:</strong> {etapaDetalhe.dataPrevista ? new Date(etapaDetalhe.dataPrevista).toLocaleString('pt-BR') : '-'}</div>
-                    <div className="p-3 rounded-lg" style={{ background: 'var(--surface-2)' }}><strong className="block text-xs" style={{ color: 'var(--text-muted)' }}>Data Real:</strong> {etapaDetalhe.dataReal ? new Date(etapaDetalhe.dataReal).toLocaleString('pt-BR') : '-'}</div>
-                    <div className="p-3 rounded-lg flex items-center gap-2" style={{ background: 'var(--surface-2)' }}><strong className="text-xs" style={{ color: 'var(--text-muted)' }}>Status:</strong> <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-bold text-white ${getStatusColor(etapaDetalhe.status)}`}>{getStatusLabel(etapaDetalhe.status)}</span></div>
-                </div>
+            <div className="p-6 max-h-[70vh] overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
+              {/* Status Banner */}
+              <div className="flex items-center gap-3 p-4 rounded-lg mb-5" style={{ background: etapaDetalhe.status === 'concluido' ? 'rgba(53,218,179,0.08)' : etapaDetalhe.status === 'concluido_atraso' ? 'rgba(245,182,77,0.08)' : etapaDetalhe.status === 'atrasado' ? 'rgba(251,113,105,0.08)' : 'rgba(124,156,255,0.08)', border: `1px solid ${etapaDetalhe.status === 'concluido' ? 'rgba(53,218,179,0.2)' : etapaDetalhe.status === 'concluido_atraso' ? 'rgba(245,182,77,0.2)' : etapaDetalhe.status === 'atrasado' ? 'rgba(251,113,105,0.2)' : 'rgba(124,156,255,0.2)'}` }}>
+                <span className={`inline-flex px-3 py-1 rounded-full text-xs font-bold text-white shadow-sm ${getStatusColor(etapaDetalhe.status)}`}>
+                  {getStatusLabel(etapaDetalhe.status)}
+                </span>
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  {etapaDetalhe.status === 'concluido' ? 'Etapa finalizada dentro do prazo' : 
+                   etapaDetalhe.status === 'concluido_atraso' ? 'Etapa finalizada com atraso' :
+                   etapaDetalhe.status === 'atrasado' ? 'Etapa com prazo vencido' :
+                   etapaDetalhe.status === 'em_andamento' ? 'Etapa em execução' :
+                   'Etapa aguardando início'}
+                </span>
+              </div>
 
-                {etapaDetalhe.descricao && (
-                  <div className="alert alert-info">
-                    <strong className="block text-xs mb-1">Descrição:</strong>
-                    <p className="text-sm">{etapaDetalhe.descricao}</p>
+              {/* Info Cards Grid */}
+              <div className="grid grid-cols-2 gap-3 mb-5">
+                <div className="p-4 rounded-lg" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-6 h-6 rounded flex items-center justify-center" style={{ background: 'var(--accent-soft)' }}>
+                      <svg className="w-3 h-3" style={{ color: 'var(--accent)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+                    </div>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Área</span>
                   </div>
-                )}
-
-                <div>
-                  <label className="form-label">Observações</label>
-                  <textarea
-                    value={observacaoModal}
-                    onChange={(e) => setObservacaoModal(e.target.value)}
-                    className="form-input"
-                    rows={4}
-                    placeholder="Adicione observações sobre esta etapa..."
-                  />
+                  <span className="text-sm font-medium" style={{ color: 'var(--text)' }}>{etapaDetalhe.area || '-'}</span>
                 </div>
+
+                <div className="p-4 rounded-lg" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-6 h-6 rounded flex items-center justify-center" style={{ background: 'var(--accent-soft)' }}>
+                      <svg className="w-3 h-3" style={{ color: 'var(--accent)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                    </div>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Responsável</span>
+                  </div>
+                  <span className="text-sm font-medium" style={{ color: 'var(--text)' }}>{etapaDetalhe.responsavel || 'Não atribuído'}</span>
+                </div>
+
+                <div className="p-4 rounded-lg" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-6 h-6 rounded flex items-center justify-center" style={{ background: 'var(--warning-soft)' }}>
+                      <svg className="w-3 h-3" style={{ color: 'var(--warning)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+                    </div>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Executado Por</span>
+                  </div>
+                  <span className="text-sm font-medium" style={{ color: 'var(--text)' }}>{etapaDetalhe.executadoPor || '-'}</span>
+                </div>
+
+                <div className="p-4 rounded-lg" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-6 h-6 rounded flex items-center justify-center" style={{ background: 'var(--info-soft)' }}>
+                      <svg className="w-3 h-3" style={{ color: 'var(--info)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    </div>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Ordem (D+)</span>
+                  </div>
+                  <span className="text-sm font-medium" style={{ color: 'var(--text)' }}>{etapaDetalhe.ordem || '-'}</span>
+                </div>
+              </div>
+
+              {/* Dates Section */}
+              <div className="grid grid-cols-2 gap-3 mb-5">
+                <div className="p-4 rounded-lg" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-6 h-6 rounded flex items-center justify-center" style={{ background: 'rgba(53,218,179,0.1)' }}>
+                      <svg className="w-3 h-3" style={{ color: 'var(--accent)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                    </div>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Data Prevista</span>
+                  </div>
+                  <span className="text-sm font-medium" style={{ color: 'var(--text)' }}>
+                    {etapaDetalhe.dataPrevista ? new Date(etapaDetalhe.dataPrevista).toLocaleString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+                  </span>
+                </div>
+
+                <div className="p-4 rounded-lg" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-6 h-6 rounded flex items-center justify-center" style={{ background: 'rgba(245,182,77,0.1)' }}>
+                      <svg className="w-3 h-3" style={{ color: 'var(--warning)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    </div>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Data Real</span>
+                  </div>
+                  <span className="text-sm font-medium" style={{ color: 'var(--text)' }}>
+                    {etapaDetalhe.dataReal ? new Date(etapaDetalhe.dataReal).toLocaleString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Description */}
+              {etapaDetalhe.descricao && (
+                <div className="p-4 rounded-lg mb-5" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <svg className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" /></svg>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Descrição</span>
+                  </div>
+                  <p className="text-sm leading-relaxed" style={{ color: 'var(--text)' }}>{etapaDetalhe.descricao}</p>
+                </div>
+              )}
+
+              {/* Observations */}
+              <div className="p-4 rounded-lg" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                <div className="flex items-center gap-2 mb-3">
+                  <svg className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                  <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Observações</span>
+                </div>
+                <textarea
+                  value={observacaoModal}
+                  onChange={(e) => setObservacaoModal(e.target.value)}
+                  className="form-input w-full"
+                  rows={3}
+                  placeholder="Adicione observações sobre esta etapa..."
+                  style={{ resize: 'vertical' }}
+                />
+                
+                {/* Positive/Negative Point Buttons */}
+                <div className="flex flex-col gap-3 mt-3">
+                  <div className="flex items-center gap-3">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Ponto:</span>
+                    <button
+                      type="button"
+                      onClick={() => { setPontoModal(pontoModal === 'positivo' ? null : 'positivo'); if (pontoModal !== 'positivo') setPontoAlvo(null); }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+                      style={{
+                        background: pontoModal === 'positivo' ? 'rgba(53,218,179,0.15)' : 'rgba(255,255,255,0.03)',
+                        border: `1px solid ${pontoModal === 'positivo' ? 'rgba(53,218,179,0.4)' : 'var(--border)'}`,
+                        color: pontoModal === 'positivo' ? 'var(--accent)' : 'var(--text-muted)'
+                      }}
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5" /></svg>
+                      Positivo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setPontoModal(pontoModal === 'negativo' ? null : 'negativo'); if (pontoModal !== 'negativo') setPontoAlvo(null); }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+                      style={{
+                        background: pontoModal === 'negativo' ? 'rgba(251,113,105,0.15)' : 'rgba(255,255,255,0.03)',
+                        border: `1px solid ${pontoModal === 'negativo' ? 'rgba(251,113,105,0.4)' : 'var(--border)'}`,
+                        color: pontoModal === 'negativo' ? 'var(--danger)' : 'var(--text-muted)'
+                      }}
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14H5.236a2 2 0 01-1.789-2.894l3.5-7A2 2 0 018.736 3h4.018a2 2 0 01.485.06l3.76.94m-7 10v5a2 2 0 002 2h.096c.5 0 .905-.405.905-.904 0-.715.211-1.413.608-2.008L17 13V4m-7 10h2m5-10h2a2 2 0 012 2v6a2 2 0 01-2 2h-2.5" /></svg>
+                      Negativo
+                    </button>
+                    {pontoModal && (
+                      <button
+                        type="button"
+                        onClick={() => { setPontoModal(null); setPontoAlvo(null); }}
+                        className="text-[10px] underline ml-1"
+                        style={{ color: 'var(--text-dim)' }}
+                      >
+                        Limpar
+                      </button>
+                    )}
+                  </div>
+                  
+                  {/* Target Selection */}
+                  {pontoModal && (
+                    <div className="flex items-center gap-3 ml-1 pl-3 py-2 rounded-lg" style={{ borderLeft: '2px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                      <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Atribuir para:</span>
+                      {etapaDetalhe.responsavel && (
+                        <button
+                          type="button"
+                          onClick={() => setPontoAlvo(pontoAlvo === 'responsavel' ? null : 'responsavel')}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+                          style={{
+                            background: pontoAlvo === 'responsavel' ? 'rgba(53,218,179,0.12)' : 'rgba(255,255,255,0.03)',
+                            border: `1px solid ${pontoAlvo === 'responsavel' ? 'rgba(53,218,179,0.35)' : 'var(--border)'}`,
+                            color: pontoAlvo === 'responsavel' ? 'var(--accent)' : 'var(--text-muted)'
+                          }}
+                        >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                          {etapaDetalhe.responsavel}
+                        </button>
+                      )}
+                      {etapaDetalhe.executadoPor && (
+                        <button
+                          type="button"
+                          onClick={() => setPontoAlvo(pontoAlvo === 'executor' ? null : 'executor')}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+                          style={{
+                            background: pontoAlvo === 'executor' ? 'rgba(53,218,179,0.12)' : 'rgba(255,255,255,0.03)',
+                            border: `1px solid ${pontoAlvo === 'executor' ? 'rgba(53,218,179,0.35)' : 'var(--border)'}`,
+                            color: pontoAlvo === 'executor' ? 'var(--accent)' : 'var(--text-muted)'
+                          }}
+                        >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+                          {etapaDetalhe.executadoPor}
+                        </button>
+                      )}
+                      {!etapaDetalhe.responsavel && !etapaDetalhe.executadoPor && (
+                        <span className="text-xs" style={{ color: 'var(--text-dim)' }}>Nenhum responsável ou executor definido</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
-            <div className="modal-footer justify-end">
+            <div className="flex items-center justify-end gap-3 p-5" style={{ borderTop: '1px solid var(--border)' }}>
               <button onClick={() => setEtapaDetalhe(null)} className="btn btn-secondary">Cancelar</button>
               <button onClick={handleSalvarObservacao} className="btn btn-primary">Salvar Observações</button>
             </div>
@@ -1006,7 +1202,8 @@ function processData(data, existingSteps = []) {
       status: status,
       concluidoEm: concluidoEm || null,
       quemConcluiu: quemConcluiu || null,
-      executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPor', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || ''
+      executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPor', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || '',
+      ponto: getVal(['PONTO', 'ponto', 'Ponto']) || ''
     });
   });
 

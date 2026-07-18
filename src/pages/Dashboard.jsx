@@ -5,7 +5,7 @@ import { usePermissao } from '../hooks/usePermissao';
 import { doc, onSnapshot, collection, getDocs, writeBatch, setDoc } from 'firebase/firestore';
 import { firestore, db as database } from '../firebase';
 import { getEtapas } from '../services/database';
-import { Clock, AlertTriangle, Activity, Target, X, Info, RefreshCw, ChevronDown, ChevronUp, Trophy, Maximize2, CheckCircle2, ListChecks } from 'lucide-react';
+import { Clock, AlertTriangle, Activity, Target, X, Info, RefreshCw, ChevronDown, ChevronUp, Trophy, Maximize2, Minimize2, CheckCircle2, ListChecks } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { ref, onValue, set } from "firebase/database";
 
@@ -50,7 +50,10 @@ export default function Dashboard() {
   const [autoSyncing, setAutoSyncing] = useState(false);
   const [showResponsavel, setShowResponsavel] = useState(false);
   const [showApoio, setShowApoio] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const pageRef = useRef(null);
   const [expandedChart, setExpandedChart] = useState(null);
+  const [selectedApoio, setSelectedApoio] = useState(null); // Novo estado para o modal de apoio
   const [kpis, setKpis] = useState({
     total: 0, concluidas: 0, concluidasNoPrazo: 0, concluidasComAtraso: 0,
     pendentes: 0, emAndamento: 0, atrasadas: 0,
@@ -129,6 +132,29 @@ export default function Dashboard() {
     setEtapas(filtered);
     calcularKpis(filtered);
   }, [allEtapas, periodoSelecionado]);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const active = !!document.fullscreenElement;
+      setIsFullscreen(active);
+    };
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape' && document.fullscreenElement) {
+        document.exitFullscreen();
+      }
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
+
 
   const handleSync = useCallback(async (isAuto = false) => {
     if (isSyncingRef.current) return;
@@ -229,8 +255,24 @@ export default function Dashboard() {
     dados.forEach(e => { const area = e.area || 'Sem Área'; if (!areaStats[area]) areaStats[area] = { total: 0, concluidas: 0 }; areaStats[area].total++; if (e.status === 'concluido' || e.status === 'concluido_atraso') areaStats[area].concluidas++; });
     const desempenhoPorArea = Object.entries(areaStats).map(([nome, s]) => ({ nome, total: s.total, concluidas: s.concluidas, percentual: s.total > 0 ? Math.round((s.concluidas/s.total)*100) : 0 })).sort((a,b) => b.percentual - a.percentual);
     const respStats = {};
-    dados.forEach(e => { const resp = e.responsavel || 'Sem Responsável'; if (!respStats[resp]) respStats[resp] = { total: 0, concluidas: 0 }; respStats[resp].total++; if (e.status === 'concluido' || e.status === 'concluido_atraso') respStats[resp].concluidas++; });
-    const desempenhoPorResponsavel = Object.entries(respStats).map(([nome, s]) => ({ nome, total: s.total, concluidas: s.concluidas, percentual: s.total > 0 ? Math.round((s.concluidas/s.total)*100) : 0 })).sort((a,b) => b.percentual - a.percentual);
+    dados.forEach(e => {
+      const resp = e.responsavel || 'Sem Responsável';
+      if (!respStats[resp]) {
+        respStats[resp] = { total: 0, concluidas: 0, atrasadas: 0 };
+      }
+      respStats[resp].total++;
+      if (e.status === 'concluido' || e.status === 'concluido_atraso') {
+        respStats[resp].concluidas++;
+      }
+      if (e.status === 'atrasado') {
+        respStats[resp].atrasadas++;
+      }
+    });
+    const desempenhoPorResponsavel = Object.entries(respStats).map(([nome, s]) => ({
+      nome, total: s.total, concluidas: s.concluidas, atrasadas: s.atrasadas,
+      percentual: s.total > 0 ? Math.round((s.concluidas / s.total) * 100) : 0
+    })).sort((a, b) => b.atrasadas - a.atrasadas); // Classifica pelos mais atrasados primeiro
+
     const execStats = {};
     dados.forEach(e => {
       const executor = e.executadoPor || 'Sem Executado';
@@ -273,7 +315,7 @@ export default function Dashboard() {
   if (!autorizado) return <div className="flex flex-col items-center justify-center h-96"><p style={{ color: 'var(--text-muted)' }}>Acesso não autorizado.</p></div>;
 
   return (
-    <div className="animate-fadeIn">
+    <div className="animate-fadeIn" ref={pageRef}>
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
@@ -291,6 +333,23 @@ export default function Dashboard() {
               return <option key={p.id} value={p.id}>{label}</option>;
             })}
           </select>
+          <button
+            onClick={async () => {
+              if (!isFullscreen) {
+                if (pageRef.current?.requestFullscreen) {
+                  await pageRef.current.requestFullscreen();
+                }
+              } else {
+                if (document.exitFullscreen) {
+                  await document.exitFullscreen();
+                }
+              }
+            }}
+            className="btn btn-secondary !p-2.5"
+            title={isFullscreen ? "Sair da Tela Cheia" : "Expandir para Tela Cheia"}
+          >
+            {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+          </button>
           <button onClick={() => handleSync(false)} disabled={syncing} className="btn btn-primary">
             <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
             {syncing ? 'Sincronizando...' : 'Sincronizar'}
@@ -502,7 +561,7 @@ export default function Dashboard() {
                   const person = kpis.rankingApoio[idx];
                   if (!person) return <div key={tier} className="flex-1" />;
                   const heights = [55, 75, 40];
-                  const emojis = { gold: '🥇', silver: '🥈', bronze: '🥉' };
+                  
                   return (
                     <div key={tier} className="flex flex-col items-center flex-1 group">
                       <span className="text-[10px] font-medium text-center mb-1" style={{ color: 'var(--text-muted)' }}>{person.nome.split(' ')[0]}</span>
@@ -516,7 +575,7 @@ export default function Dashboard() {
               </div>
               <div className="flex flex-col gap-2">
                 {kpis.rankingApoio.slice(0, 5).map((item, index) => (
-                  <div key={index} className="flex items-center gap-3 py-1.5" style={{ borderBottom: index < 4 ? '1px solid var(--border)' : 'none' }}>
+                  <div key={index} onClick={() => setSelectedApoio(item.nome)} className="flex items-center gap-3 py-1.5 cursor-pointer hover:bg-slate-50/5 rounded-md px-2" style={{ borderBottom: index < 4 ? '1px solid var(--border)' : 'none' }}>
                     <span className="w-5 h-5 flex items-center justify-center rounded text-[10px]" style={{ fontFamily: 'var(--font-mono)', background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--text-dim)' }}>{index+1}</span>
                     <span className="text-xs font-medium flex-1" style={{ color: 'var(--text)' }}>{item.nome}</span>
                     <span className="text-[10px]" style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>{item.count} tarefas</span>
@@ -669,6 +728,7 @@ export default function Dashboard() {
       {selectedStatus && <StatusDetailsModal statusType={selectedStatus} etapas={etapas} onClose={() => setSelectedStatus(null)} />}
       {selectedArea && <AreaDetailsModal name={selectedArea} type={selectedAreaType} etapas={etapas} onClose={() => setSelectedArea(null)} />}
       {selectedGargalo && <GargalosDetailsModal areaName={selectedGargalo} etapas={etapas} onClose={() => setSelectedGargalo(null)} />}
+      {selectedApoio && <ApoioDetailsModal apoiadorName={selectedApoio} etapas={etapas} onClose={() => setSelectedApoio(null)} />}
     </div>
   );
 }
@@ -710,6 +770,7 @@ function StatusBadge({ color, label, count, onClick, className = '' }) {
 }
 
 function RadarModal({ userName, allEtapas, onClose }) {
+  const [selectedPontos, setSelectedPontos] = useState(null); // 'positivo' | 'negativo' | null
   const userTasks = allEtapas.filter(e => e.responsavel === userName);
   const total = userTasks.length;
   const concluidas = userTasks.filter(e => e.status === 'concluido' || e.status === 'concluido_atraso').length;
@@ -736,20 +797,84 @@ function RadarModal({ userName, allEtapas, onClose }) {
     return String(e.executadoPor).trim().toLowerCase() !== String(userName).trim().toLowerCase();
   }).length;
 
+  // Contagem de pontos positivos e negativos recebidos pelo usuário
+  const pontosPositivos = allEtapas.filter(e => {
+    const pontoAlvo = String(e.pontoAlvo || '').trim().toLowerCase();
+    const pontoOpostoAlvo = String(e.pontoOpostoAlvo || '').trim().toLowerCase();
+    const userNameLower = String(userName).trim().toLowerCase();
+    const pontoValor = String(e.ponto || '').trim().toLowerCase();
+    const pontoOpostoValor = String(e.pontoOposto || '').trim().toLowerCase();
+    return (pontoAlvo === userNameLower && pontoValor === 'positivo') ||
+           (pontoOpostoAlvo === userNameLower && pontoOpostoValor === 'positivo');
+  }).length;
+
+  const pontosNegativos = allEtapas.filter(e => {
+    const pontoAlvo = String(e.pontoAlvo || '').trim().toLowerCase();
+    const pontoOpostoAlvo = String(e.pontoOpostoAlvo || '').trim().toLowerCase();
+    const userNameLower = String(userName).trim().toLowerCase();
+    const pontoValor = String(e.ponto || '').trim().toLowerCase();
+    const pontoOpostoValor = String(e.pontoOposto || '').trim().toLowerCase();
+    return (pontoAlvo === userNameLower && pontoValor === 'negativo') ||
+           (pontoOpostoAlvo === userNameLower && pontoOpostoValor === 'negativo');
+  }).length;
+
   const metrics = [
-    { label: 'Conclusão', value: total > 0 ? Math.round((concluidas/total)*100) : 0, desc: 'Taxa de finalização (Concluídas / Total).' },
-    { label: 'Pontualidade', value: concluidas > 0 ? Math.round((concluidasNoPrazo/concluidas)*100) : 0, desc: 'Qualidade da entrega no prazo.' },
-    { label: 'Aderência', value: total > 0 ? Math.round(((total-atrasadas)/total)*100) : 0, desc: 'Saúde da carteira.' },
-    { label: 'Volume', value: Math.round((total/maxTotal)*100), desc: 'Carga de trabalho relativa.' },
-    { label: 'Eficiência', value: Math.max(0, 100 - Math.round(mediaAtraso*5)), desc: 'Penaliza atrasos longos.' },
-    { label: 'Delegação', value: total > 0 ? Math.round((delegadas/total)*100) : 0, desc: 'Tarefas executadas por terceiros.' },
+    { label: 'Conclusão', value: total > 0 ? Math.round((concluidas/total)*100) : 0, desc: 'Taxa de finalização.', formula: '(Concluídas / Total) * 100' },
+    { label: 'Pontualidade', value: concluidas > 0 ? Math.round((concluidasNoPrazo/concluidas)*100) : 0, desc: 'Qualidade da entrega no prazo.', formula: '(Concluídas no Prazo / Concluídas) * 100' },
+    { label: 'Aderência', value: total > 0 ? Math.round(((total-atrasadas)/total)*100) : 0, desc: 'Saúde da carteira.', formula: '((Total - Atrasadas) / Total) * 100' },
+    { label: 'Volume', value: Math.round((total/maxTotal)*100), desc: 'Carga de trabalho relativa.', formula: '(Tarefas do Usuário / Max Tarefas) * 100' },
+    { label: 'Eficiência', value: total > 0 ? Math.round((concluidasNoPrazo / total) * 100) : 0, desc: 'Pontua quem entrega no prazo.', formula: '(Concluídas no Prazo / Total) * 100' },
+    { label: 'Delegação', value: total > 0 ? Math.round((delegadas/total)*100) : 0, desc: 'Tarefas executadas por terceiros.', formula: '(Delegadas / Total) * 100' },
   ];
   const eficiencia = metrics.find(m => m.label === 'Eficiência').value;
   const volume = metrics.find(m => m.label === 'Volume').value;
-  let resumo = `O desempenho de ${userName} indica necessidade de atenção aos prazos.`;
-  if (eficiencia >= 90) resumo = volume >= 80 ? `Alta performance com alto volume de trabalho.` : `Excelente eficácia nas entregas.`;
-  else if (eficiencia >= 70) resumo = `Bom desempenho geral, com oportunidades pontuais de melhoria.`;
+  const conclusao = metrics.find(m => m.label === 'Conclusão').value;
+  const pontualidade = metrics.find(m => m.label === 'Pontualidade').value;
+  const aderencia = metrics.find(m => m.label === 'Aderência').value;
+  const delegacao = metrics.find(m => m.label === 'Delegação').value;
 
+  const pontosFracos = [];
+  const pontosFortes = [];
+
+  // Análise de Conclusão
+  if (conclusao < 50) pontosFracos.push('baixa taxa de conclusão');
+  else if (conclusao >= 90) pontosFortes.push('alta taxa de conclusão');
+
+  // Análise de Pontualidade
+  if (pontualidade < 50) pontosFracos.push('baixa pontualidade nas entregas');
+  else if (pontualidade >= 90) pontosFortes.push('excelente pontualidade');
+
+  // Análise de Aderência
+  if (aderencia < 70) pontosFracos.push('carteira com muitos itens em atraso');
+  else if (aderencia >= 90) pontosFortes.push('carteira saudável');
+
+  // Análise de Eficiência
+  if (eficiencia < 50) pontosFracos.push('atrasos longos impactando a eficiência');
+  else if (eficiencia >= 90) pontosFortes.push('alta eficiência na execução');
+
+  // Análise de Volume
+  if (volume >= 80) pontosFortes.push('alta carga de trabalho');
+  else if (volume < 30) pontosFracos.push('baixo volume de trabalho relativo');
+
+  // Análise de Delegação
+  if (delegacao === 0) {
+    pontosFracos.push('nenhuma delegação de tarefas — pode indicar centralização excessiva ou falta de capacidade de distribuir carga');
+  } else if (delegacao < 20) {
+    pontosFracos.push('baixa delegação de tarefas — avaliar oportunidade de distribuir atividades');
+  } else if (delegacao > 70) {
+    pontosFortes.push('boa capacidade de delegação');
+  }
+
+  let resumo;
+  if (pontosFortes.length > 0 && pontosFracos.length === 0) {
+    resumo = `Desempenho excelente: ${pontosFortes.join('; ')}.`;
+  } else if (pontosFortes.length > 0 && pontosFracos.length > 0) {
+    resumo = `${pontosFortes.join('; ')}. Porém, requer atenção: ${pontosFracos.join('; ')}.`;
+  } else if (pontosFracos.length > 0) {
+    resumo = `O desempenho de ${userName} indica necessidade de atenção: ${pontosFracos.join('; ')}.`;
+  } else {
+    resumo = `Desempenho equilibrado, sem pontos críticos identificados.`;
+  }
   const size = 300, center = size/2, radiusG = 100, angleSlice = 360 / metrics.length;
   const getPoint = (value, index) => {
     const angle = index * angleSlice - 90;
@@ -772,8 +897,8 @@ function RadarModal({ userName, allEtapas, onClose }) {
           </button>
         </div>
         <div className="p-6 flex flex-col items-center">
-          <div className="relative w-[260px] h-[260px]">
-            <svg width={size} height={size} className="overflow-visible" style={{ transform: 'scale(0.87)', transformOrigin: 'center' }}>
+          <div className="relative w-[340px] h-[340px] mx-auto">
+            <svg width={size} height={size} className="overflow-visible" style={{ transform: 'scale(1.13)', transformOrigin: 'center' }}>
               {[20,40,60,80,100].map(l => <polygon key={l} points={metrics.map((_,i) => { const p = getPoint(l,i); return `${p.x},${p.y}`; }).join(' ')} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="1"/>)}
               {metrics.map((_,i) => { const p = getPoint(100,i); return <line key={i} x1={center} y1={center} x2={p.x} y2={p.y} stroke="rgba(255,255,255,0.08)" strokeWidth="1"/>; })}
               <polygon points={points} fill="rgba(53,218,179,0.12)" stroke="var(--accent)" strokeWidth="2"/>
@@ -781,20 +906,187 @@ function RadarModal({ userName, allEtapas, onClose }) {
               {metrics.map((m,i) => { const p = getPoint(115,i); return <text key={i} x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle" fill="var(--text-muted)" fontSize="10" fontFamily="var(--font-body)" fontWeight="600">{m.label}</text>; })}
             </svg>
           </div>
-          <div className="w-full p-4 rounded-lg mb-4" style={{ background: 'var(--accent-soft)', border: '1px solid rgba(53,218,179,0.2)' }}>
-            <p className="text-sm leading-relaxed" style={{ color: 'var(--accent)' }}>{resumo}</p>
-          </div>
+          {(pontosFortes.length > 0 || pontosFracos.length > 0) && (
+            <div className="w-full grid grid-cols-2 gap-3 mb-4">
+              {pontosFortes.length > 0 && (
+                <div className="p-3 rounded-lg" style={{ background: 'rgba(53,218,179,0.08)', border: '1px solid rgba(53,218,179,0.2)' }}>
+                  <h4 className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--accent)' }}>✓ Pontos Positivos</h4>
+                  <ol className="flex flex-col gap-1 list-decimal list-inside">
+                    {pontosFortes.map((p, i) => (
+                      <li key={i} className="text-[11px] leading-relaxed" style={{ color: 'var(--accent)' }}>{p}</li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+              {pontosFracos.length > 0 && (
+                <div className="p-3 rounded-lg" style={{ background: 'rgba(251,113,105,0.08)', border: '1px solid rgba(251,113,105,0.2)' }}>
+                  <h4 className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--danger)' }}>⚠ Pontos a Melhorar</h4>
+                  <ol className="flex flex-col gap-1 list-decimal list-inside">
+                    {pontosFracos.map((p, i) => (
+                      <li key={i} className="text-[11px] leading-relaxed" style={{ color: 'var(--danger)' }}>{p}</li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+            </div>
+          )}
+          {pontosFortes.length === 0 && pontosFracos.length === 0 && (
+            <div className="w-full p-4 rounded-lg mb-4" style={{ background: 'var(--accent-soft)', border: '1px solid rgba(53,218,179,0.2)' }}>
+              <p className="text-sm leading-relaxed" style={{ color: 'var(--accent)' }}>Desempenho equilibrado, sem pontos críticos identificados.</p>
+            </div>
+          )}
           <div className="flex flex-col gap-2 w-full">
             {metrics.map((m, i) => (
               <div key={i} className="flex items-center justify-between p-3 rounded-lg" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
                 <div className="pr-3">
                   <div className="text-xs font-semibold" style={{ color: 'var(--text)' }}>{m.label}</div>
-                  <div className="text-[10px] mt-0.5 leading-relaxed" style={{ color: 'var(--text-dim)' }}>{m.desc}</div>
+                  <div className="text-[10px] mt-0.5 leading-relaxed" style={{ color: 'var(--text-dim)' }}>
+                    {m.desc}
+                    <span className="block font-mono mt-1" style={{ color: 'var(--accent-2)' }}>{m.formula}</span>
+                  </div>
                 </div>
                 <span className="text-base font-bold shrink-0" style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>{m.value}%</span>
               </div>
             ))}
+            
+            {/* Pontuação Recebida */}
+            <div className="flex items-center justify-between p-3 rounded-lg mt-2" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setSelectedPontos(selectedPontos === 'positivo' ? null : 'positivo')}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-md cursor-pointer transition-all hover:opacity-80"
+                  style={{ background: 'rgba(53,218,179,0.1)' }}
+                >
+                  <svg className="w-3 h-3" style={{ color: 'var(--accent)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5" /></svg>
+                  <span className="text-xs font-bold" style={{ color: 'var(--accent)' }}>{pontosPositivos}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedPontos(selectedPontos === 'negativo' ? null : 'negativo')}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-md cursor-pointer transition-all hover:opacity-80"
+                  style={{ background: 'rgba(251,113,105,0.1)' }}
+                >
+                  <svg className="w-3 h-3" style={{ color: 'var(--danger)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14H5.236a2 2 0 01-1.789-2.894l3.5-7A2 2 0 018.736 3h4.018a2 2 0 01.485.06l3.76.94m-7 10v5a2 2 0 002 2h.096c.5 0 .905-.405.905-.904 0-.715.211-1.413.608-2.008L17 13V4m-7 10h2m5-10h2a2 2 0 012 2v6a2 2 0 01-2 2h-2.5" /></svg>
+                  <span className="text-xs font-bold" style={{ color: 'var(--danger)' }}>{pontosNegativos}</span>
+                </button>
+              </div>
+              <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                <span className="font-semibold">Pontuação recebida</span>
+              </div>
+            </div>
           </div>
+        </div>
+      </div>
+
+      {/* Modal de Detalhes dos Pontos */}
+      {selectedPontos && (
+        <PontosDetalhesModal
+          tipo={selectedPontos}
+          userName={userName}
+          allEtapas={allEtapas}
+          onClose={() => setSelectedPontos(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function PontosDetalhesModal({ tipo, userName, allEtapas, onClose }) {
+  const pontosFiltrados = allEtapas.filter(e => {
+    const pontoAlvo = String(e.pontoAlvo || '').trim().toLowerCase();
+    const pontoOpostoAlvo = String(e.pontoOpostoAlvo || '').trim().toLowerCase();
+    const userNameLower = String(userName).trim().toLowerCase();
+    const pontoValor = String(e.ponto || '').trim().toLowerCase();
+    const pontoOpostoValor = String(e.pontoOposto || '').trim().toLowerCase();
+    
+    if (tipo === 'positivo') {
+      return (pontoAlvo === userNameLower && pontoValor === 'positivo') ||
+             (pontoOpostoAlvo === userNameLower && pontoOpostoValor === 'positivo');
+    }
+    return (pontoAlvo === userNameLower && pontoValor === 'negativo') ||
+           (pontoOpostoAlvo === userNameLower && pontoOpostoValor === 'negativo');
+  });
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content" style={{ maxWidth: '600px' }}>
+        <div className="flex items-center justify-between p-5" style={{ borderBottom: '1px solid var(--border)' }}>
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: tipo === 'positivo' ? 'rgba(53,218,179,0.1)' : 'rgba(251,113,105,0.1)' }}>
+              <svg className="w-4 h-4" style={{ color: tipo === 'positivo' ? 'var(--accent)' : 'var(--danger)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                {tipo === 'positivo' ? (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5" />
+                ) : (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14H5.236a2 2 0 01-1.789-2.894l3.5-7A2 2 0 018.736 3h4.018a2 2 0 01.485.06l3.76.94m-7 10v5a2 2 0 002 2h.096c.5 0 .905-.405.905-.904 0-.715.211-1.413.608-2.008L17 13V4m-7 10h2m5-10h2a2 2 0 012 2v6a2 2 0 01-2 2h-2.5" />
+                )}
+              </svg>
+            </div>
+            <div>
+              <h3 className="text-base font-semibold" style={{ fontFamily: 'var(--font-display)', color: 'var(--text)' }}>
+                Pontos {tipo === 'positivo' ? 'Positivos' : 'Negativos'}
+              </h3>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                {pontosFiltrados.length} {pontosFiltrados.length === 1 ? 'etapa' : 'etapas'} • {userName}
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg transition-colors" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+            <X className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+          </button>
+        </div>
+        <div className="max-h-[60vh] overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
+          {pontosFiltrados.length === 0 ? (
+            <div className="p-8 text-center text-sm" style={{ color: 'var(--text-dim)' }}>Nenhuma etapa encontrada.</div>
+          ) : (
+            <div className="flex flex-col gap-2 p-4">
+              {pontosFiltrados.map((item, idx) => {
+                const userNameLower = String(userName).trim().toLowerCase();
+                const pontoAlvo = String(item.pontoAlvo || '').trim().toLowerCase();
+                const pontoOpostoAlvo = String(item.pontoOpostoAlvo || '').trim().toLowerCase();
+                const pontoValor = String(item.ponto || '').trim().toLowerCase();
+                const pontoOpostoValor = String(item.pontoOposto || '').trim().toLowerCase();
+                
+                const isAlvoDireto = pontoAlvo === userNameLower && pontoValor === tipo;
+                const tipoPonto = isAlvoDireto ? item.pontoTipo : item.pontoOpostoTipo;
+                const atribuidoPor = isAlvoDireto ? (item.pontoOpostoAlvo || item.pontoAlvo) : (item.pontoAlvo || item.pontoOpostoAlvo);
+                
+                return (
+                  <div key={idx} className="p-3 rounded-lg" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium truncate" style={{ color: 'var(--text)' }}>{item.nome}</div>
+                        <div className="text-[10px] mt-1" style={{ color: 'var(--text-dim)' }}>
+                          {item.codigo && <span className="font-mono mr-2">{item.codigo}</span>}
+                          {item.area && <span>{item.area}</span>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold text-white ${getStatusColor(item.status)}`}>
+                          {getStatusLabel(item.status)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 mt-2 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                      {tipoPonto && (
+                        <span className={`px-1.5 py-0.5 rounded ${tipoPonto === 'executor' ? '' : ''}`} style={{ background: tipoPonto === 'executor' ? 'rgba(245,182,77,0.1)' : 'rgba(124,156,255,0.1)' }}>
+                          {tipoPonto === 'executor' ? 'Como executor' : 'Como responsável'}
+                        </span>
+                      )}
+                      {atribuidoPor && (
+                        <span>Atribuído por {atribuidoPor}</span>
+                      )}
+                    </div>
+                    {item.observacoes && (
+                      <div className="mt-1.5 text-[10px] leading-relaxed" style={{ color: 'var(--text-dim)' }}>
+                        <span className="italic">"{item.observacoes}"</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -802,6 +1094,7 @@ function RadarModal({ userName, allEtapas, onClose }) {
 }
 
 function StatusDetailsModal({ statusType, etapas, onClose }) {
+  const [selectedEtapa, setSelectedEtapa] = useState(null);
   const getFiltered = () => {
     switch (statusType) {
       case 'concluidas_no_prazo': return etapas.filter(e => { if (e.status !== 'concluido' && e.status !== 'concluido_atraso') return false; if (e.status === 'concluido_atraso') return false; if (!e.dataReal || !e.dataPrevista) return true; return new Date(e.dataReal).setHours(0,0,0,0) <= new Date(e.dataPrevista).setHours(0,0,0,0); });
@@ -815,6 +1108,67 @@ function StatusDetailsModal({ statusType, etapas, onClose }) {
   const filtered = getFiltered();
   const titles = { concluidas_no_prazo: 'Concluídas no Prazo', concluidas_atraso: 'Concluídas com Atraso', em_andamento: 'Em Andamento', pendentes: 'Pendentes', atrasadas: 'Atrasadas' };
   const calcularAtraso = (p, r) => { if (!p || !r) return '-'; const d = new Date(r) - new Date(p); if (d <= 0) return '-'; return `${Math.floor(d / (1000*60*60))}h ${Math.floor((d % (1000*60*60*60)) / (1000*60))}m`; };
+
+  if (selectedEtapa) {
+    return (
+      <div className="modal-overlay">
+        <div className="modal-content" style={{ maxWidth: '600px' }}>
+          <div className="flex items-center justify-between p-5" style={{ borderBottom: '1px solid var(--border)' }}>
+            <div>
+              <h3 className="text-base font-semibold" style={{ fontFamily: 'var(--font-display)' }}>Detalhes da Etapa</h3>
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{selectedEtapa.codigo || 'Sem código'}</p>
+            </div>
+            <button onClick={() => setSelectedEtapa(null)} className="p-1.5 rounded-lg transition-colors" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+              <X className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+            </button>
+          </div>
+          <div className="p-6">
+            <h4 className="text-lg font-semibold mb-4" style={{ fontFamily: 'var(--font-display)', color: 'var(--text)' }}>{selectedEtapa.nome}</h4>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="p-3 rounded-lg" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                <div className="text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>Código</div>
+                <div className="text-sm font-mono" style={{ color: 'var(--text)' }}>{selectedEtapa.codigo || '-'}</div>
+              </div>
+              <div className="p-3 rounded-lg" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                <div className="text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>Área</div>
+                <div className="text-sm" style={{ color: 'var(--text)' }}>{selectedEtapa.area || '-'}</div>
+              </div>
+              <div className="p-3 rounded-lg" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                <div className="text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>Responsável</div>
+                <div className="text-sm" style={{ color: 'var(--text)' }}>{selectedEtapa.responsavel || 'Não atribuído'}</div>
+              </div>
+              <div className="p-3 rounded-lg" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                <div className="text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>Executado Por</div>
+                <div className="text-sm" style={{ color: 'var(--text)' }}>{selectedEtapa.executadoPor || '-'}</div>
+              </div>
+              <div className="p-3 rounded-lg" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                <div className="text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>Data Prevista</div>
+                <div className="text-sm font-mono" style={{ color: 'var(--text)' }}>{selectedEtapa.dataPrevista ? new Date(selectedEtapa.dataPrevista).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}</div>
+              </div>
+              <div className="p-3 rounded-lg" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                <div className="text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>Data Real</div>
+                <div className="text-sm font-mono" style={{ color: 'var(--text)' }}>{selectedEtapa.dataReal ? new Date(selectedEtapa.dataReal).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}</div>
+              </div>
+              <div className="p-3 rounded-lg" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                <div className="text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>Status</div>
+                <div className="text-sm" style={{ color: 'var(--text)' }}>{selectedEtapa.status === 'concluido' ? 'Concluído' : selectedEtapa.status === 'concluido_atraso' ? 'Concluído com Atraso' : selectedEtapa.status === 'atrasado' ? 'Atrasado' : selectedEtapa.status === 'em_andamento' ? 'Em Andamento' : 'Pendente'}</div>
+              </div>
+              <div className="p-3 rounded-lg" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                <div className="text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>Atraso</div>
+                <div className="text-sm font-mono" style={{ color: 'var(--text)' }}>{calcularAtraso(selectedEtapa.dataPrevista, selectedEtapa.dataReal)}</div>
+              </div>
+            </div>
+            {selectedEtapa.observacoes && (
+              <div className="p-3 rounded-lg mt-4" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                <div className="text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>Observações</div>
+                <div className="text-sm" style={{ color: 'var(--text)' }}>{selectedEtapa.observacoes}</div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="modal-overlay">
@@ -848,7 +1202,9 @@ function StatusDetailsModal({ statusType, etapas, onClose }) {
                 </thead>
                 <tbody>
                   {filtered.map((item, idx) => (
-                    <tr key={idx}>
+                    <tr key={idx} onClick={() => setSelectedEtapa(item)} className="cursor-pointer transition-colors" style={{ cursor: 'pointer' }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                       <td style={{ fontFamily: 'var(--font-mono)' }}>{item.codigo || '-'}</td>
                       <td><div className="line-clamp-2" title={item.nome}>{item.nome}</div></td>
                       <td>{item.responsavel || 'Não atribuído'}</td>
@@ -977,6 +1333,65 @@ function GargalosDetailsModal({ areaName, etapas, onClose }) {
   );
 }
 
+function ApoioDetailsModal({ apoiadorName, etapas, onClose }) {
+  const filtered = etapas.filter(e => e.executadoPor === apoiadorName);
+  const calcularAtraso = (p, r) => { if (!p || !r) return '-'; const d = new Date(r) - new Date(p); if (d <= 0) return '-'; return `${Math.floor(d / (1000*60*60))}h ${Math.floor((d % (1000*60*60*60)) / (1000*60))}m`; };
+  
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content" style={{ maxWidth: '98vw' }}>
+        <div className="flex items-center justify-between p-4" style={{ borderBottom: '1px solid var(--border)' }}>
+          <div>
+            <h3 className="text-base font-semibold" style={{ fontFamily: 'var(--font-display)' }}>Tarefas Apoiadas por: {apoiadorName}</h3>
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{filtered.length} itens</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+            <X className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+          </button>
+        </div>
+        <div className="overflow-auto max-h-[70vh]">
+          {filtered.length === 0 ? (
+            <div className="p-8 text-center text-sm" style={{ color: 'var(--text-dim)' }}>Nenhuma tarefa apoiada encontrada.</div>
+          ) : (
+            <div className="table-wrap m-4">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Código</th>
+                    <th style={{ minWidth: '200px' }}>Etapa</th>
+                    <th>Responsável Original</th>
+                    <th>Status</th>
+                    <th>Prevista</th>
+                    <th>Realizado</th>
+                    <th className="text-center">Atraso</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((item, idx) => (
+                    <tr key={idx}>
+                      <td style={{ fontFamily: 'var(--font-mono)' }}>{item.codigo || '-'}</td>
+                      <td><div className="line-clamp-2" title={item.nome}>{item.nome}</div></td>
+                      <td>{item.responsavel || 'Não atribuído'}</td>
+                      <td>
+                        <span className={`badge ${item.status.includes('concluido') ? 'badge-success' : 'badge-warning'}`}>
+                          {item.status === 'concluido' ? 'Concluído' : item.status === 'concluido_atraso' ? 'Concluído c/ Atraso' : item.status}
+                        </span>
+                      </td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>{item.dataPrevista ? new Date(item.dataPrevista).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}</td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>{item.dataReal ? new Date(item.dataReal).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}</td>
+                      <td className="text-center" style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>{calcularAtraso(item.dataPrevista, item.dataReal)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Keep original processData and processRealtimeData functions unchanged
 function processRealtimeData(data) {
   if (!data) return [];
@@ -1048,11 +1463,23 @@ function processData(data, existingSteps = []) {
     const statusStr = rawStatus ? String(rawStatus).toLowerCase() : '';
     if (dataReal || statusStr.includes('conclu')) {
       const isLateByDate = dataReal && dataPrevista && new Date(dataReal) > new Date(dataPrevista);
-      status = (isLateByDate || statusStr.includes('atras')) ? 'concluido_atraso' : 'concluido';
+      status = (isLateByDate || statusStr.includes('atraso')) ? 'concluido_atraso' : 'concluido';
     } else if (dataPrevista && new Date(dataPrevista) < new Date()) { status = 'atrasado'; }
     if (!status.startsWith('concluido') && statusStr.includes('atras')) status = 'atrasado';
     else if (!status.startsWith('concluido') && statusStr.includes('andamento')) status = 'em_andamento';
-    etapasValidadas.push({ id: existing?.id || null, nome, codigo: String(codigo||''), area: getVal(['ÁREA','área','area'])||'', responsavel: getVal(['ATRIBUÍDO PARA','atribuído para','responsável','responsavel'])||'', status, dataPrevista, dataReal, ordem: parseInt(getVal(['D+','ordem','Ordem']))||index+1, executadoPor: getVal(['EXECUTADO POR','executado por'])||'', observacoes: getVal(['Observações','observações','obs'])||'' });
+    etapasValidadas.push({
+      id: existing?.id || null,
+      nome,
+      codigo: String(codigo || ''),
+      area: getVal(['ÁREA', 'área', 'area']) || '',
+      responsavel: getVal(['ATRIBUÍDO PARA', 'atribuído para', 'responsável', 'responsavel']) || '',
+      status,
+      dataPrevista,
+      dataReal,
+      ordem: parseInt(getVal(['D+', 'ordem', 'Ordem'])) || index + 1,
+      executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPOr', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || '',
+      observacoes: getVal(['Observações', 'observações', 'obs']) || ''
+    });
   });
   return etapasValidadas;
 }
