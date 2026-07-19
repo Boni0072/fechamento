@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { getFirestore, doc, onSnapshot, updateDoc, collection } from 'firebase/firestore';
 import { getDatabase, ref, onValue } from 'firebase/database';
 import { useAuth } from '../contexts/AuthContext';
-import { usePermissao } from '../hooks/usePermissao';
+import { usePermissao } from '../hooks/usePermissao'; // eslint-disable-line no-unused-vars
 import { getPeriodos, getResponsaveis } from '../services/database';
 import { Bell, Clock, AlertTriangle, Settings, Mail, Send, X, Mailbox, ChevronDown, ChevronUp } from 'lucide-react';
 import { format, differenceInDays } from 'date-fns';
@@ -267,6 +267,28 @@ export default function Notificacoes() {
       }, index * 800);
     });
     setShowEmailModal(false);
+  };
+
+  const handleSendMassEmail = () => {
+    const usersWithEmail = notificationsByUser.filter(u => u.email);
+
+    if (usersWithEmail.length === 0) {
+      alert("Nenhum responsável com e-mail válido encontrado para o envio.");
+      return;
+    }
+
+    const recipients = usersWithEmail.map(u => u.email).join(',');
+
+    const subject = encodeURIComponent(`Alerta Geral de Pendências - Fechamento Contábil`);
+    const body = encodeURIComponent(
+      `Olá a todos,\n\nEste é um lembrete geral de que existem pendências no fechamento contábil.` +
+      `\n\nPor favor, verifiquem suas tarefas no sistema e atualizem o status assim que possível.` +
+      `\n\nAtenciosamente,\nEquipe de Fechamento`
+    );
+
+    // Usando BCC para proteger a privacidade dos destinatários
+    const url = `mailto:?bcc=${recipients}&subject=${subject}&body=${body}`;
+    window.location.href = url;
   };
 
   // Verifica e sugere envio automático ao carregar
@@ -617,6 +639,14 @@ export default function Notificacoes() {
                   Enviar Individualmente
                 </button>
                 <button onClick={() => setShowEmailModal(false)} className="p-2 rounded-full transition-colors">
+                  <X className="w-5 h-5" style={{ color: 'var(--text-dim)' }} />
+                </button>
+                <button
+                  onClick={handleSendMassEmail}
+                  className="btn btn-primary text-sm font-medium"
+                  title="Abre um único e-mail com todos os destinatários em cópia oculta"
+                >
+                  <Send className="w-4 h-4" />
                   <X className="w-5 h-5" style={{ color: 'var(--text-dim)' }} />
                 </button>
               </div>

@@ -5,8 +5,9 @@ import { usePermissao } from '../hooks/usePermissao';
 import { doc, onSnapshot, collection, getDocs, writeBatch, setDoc } from 'firebase/firestore';
 import { firestore, db as database } from '../firebase';
 import { getEtapas } from '../services/database';
-import { Clock, AlertTriangle, Activity, Target, X, Info, RefreshCw, ChevronDown, ChevronUp, Trophy, Maximize2, Minimize2, CheckCircle2, ListChecks } from 'lucide-react';
+import { Clock, AlertTriangle, Activity, Target, X, Info, RefreshCw, ChevronDown, ChevronUp, Trophy, Maximize2, Minimize2, CheckCircle2, ListChecks, Mail, Send } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import html2canvas from 'html2canvas';
 import { ref, onValue, set } from "firebase/database";
 
 export default function Dashboard() {
@@ -54,6 +55,8 @@ export default function Dashboard() {
   const pageRef = useRef(null);
   const [expandedChart, setExpandedChart] = useState(null);
   const [selectedApoio, setSelectedApoio] = useState(null); // Novo estado para o modal de apoio
+  const [usersMap, setUsersMap] = useState({});
+  const [tooltip, setTooltip] = useState({ show: false, content: '', x: 0, y: 0 });
   const [kpis, setKpis] = useState({
     total: 0, concluidas: 0, concluidasNoPrazo: 0, concluidasComAtraso: 0,
     pendentes: 0, emAndamento: 0, atrasadas: 0,
@@ -62,6 +65,17 @@ export default function Dashboard() {
     desempenhoPorEmpresa: [], rankingApoio: []
   });
 
+  useEffect(() => {
+    if (!empresaAtual?.id) return;
+    const unsub = onSnapshot(collection(firestore, 'tenants', empresaAtual.id, 'usuarios'), (snapshot) => {
+      const users = {};
+      snapshot.forEach(doc => {
+        users[doc.data().nome] = doc.data();
+      });
+      setUsersMap(users);
+    });
+    return () => unsub();
+  }, [empresaAtual]);
   useEffect(() => { setPeriodoSelecionado(null); }, [empresaAtual]);
 
   useEffect(() => {
@@ -154,6 +168,89 @@ export default function Dashboard() {
     };
   }, []);
 
+  const handleSendPerformanceEmail = async (userName) => {
+    const radarContainer = document.createElement('div');
+    radarContainer.style.position = 'fixed';
+    radarContainer.style.left = '-9999px';
+    radarContainer.style.top = '-9999px';
+    radarContainer.style.width = '500px';
+    radarContainer.style.background = '#1e293b'; // Cor de fundo do modal
+    radarContainer.style.padding = '20px';
+    document.body.appendChild(radarContainer);
+
+    const modalContent = (
+      <RadarModal 
+        userName={userName} 
+        allEtapas={etapas} 
+        onClose={() => {}} 
+        isForExport={true} 
+      />
+    );
+
+    const { createRoot } = await import('react-dom/client');
+    createRoot(radarContainer).render(modalContent);
+
+    setTimeout(async () => {
+      try {
+        const canvas = await html2canvas(radarContainer, { useCORS: true, backgroundColor: '#1e293b' });
+        const image = canvas.toDataURL('image/png');
+        
+        let user = usersMap[userName];
+        let email = user?.email;
+
+        // Fallback: Se não encontrar pelo nome exato, tenta uma busca mais flexível
+        if (!email) {
+          const normalizedUserName = userName.trim().toLowerCase();
+          const foundUser = Object.values(usersMap).find(u => 
+            u.nome.trim().toLowerCase().startsWith(normalizedUserName)
+          );
+          if (foundUser) {
+            email = foundUser.email;
+          }
+        }
+
+        if (!email) {
+          alert(`E-mail para "${userName}" não encontrado.`);
+          return;
+        }
+
+        const subject = encodeURIComponent(`Análise de Performance - ${userName}`);
+        const body = encodeURIComponent(`Olá ${userName.split(' ')[0]},\n\nSegue sua análise de performance atual.\n\n(Cole a imagem aqui com Ctrl+V ou Cmd+V)`);
+        const mailtoLink = `mailto:${email}?subject=${subject}&body=${body}`;
+        
+        alert('O rascunho do e-mail será aberto. A imagem do radar foi copiada para sua área de transferência. Cole-a (Ctrl+V ou Cmd+V) no corpo do e-mail.');
+        navigator.clipboard.write([new ClipboardItem({ 'image/png': await (await fetch(image)).blob() })]);
+        window.open(mailtoLink, '_blank');
+      } finally {
+        document.body.removeChild(radarContainer);
+      }
+    }, 1000); // Aguarda a renderização do modal
+  };
+
+  const handleSendMassPerformanceEmail = async () => {
+    const responsibleUsers = kpis.desempenhoPorResponsavel;
+    if (!responsibleUsers || responsibleUsers.length === 0) {
+      alert("Não há responsáveis com tarefas para notificar.");
+      return;
+    }
+    if (!window.confirm(`Atenção: Isso tentará abrir ${responsibleUsers.length} rascunhos de e-mail, um para cada responsável.\n\nSeu navegador pode bloquear pop-ups. Certifique-se de permitir pop-ups para este site.\n\nDeseja continuar?`)) {
+      return;
+    }
+
+    for (const user of responsibleUsers) {
+      try {
+        // Usamos await para garantir que um e-mail seja processado de cada vez
+        await handleSendPerformanceEmail(user.nome);
+        // Pequena pausa para o navegador não bloquear as múltiplas aberturas
+        await new Promise(resolve => setTimeout(resolve, 1200));
+      } catch (error) {
+        console.error(`Falha ao enviar e-mail para ${user.nome}:`, error);
+        if (!window.confirm(`Ocorreu um erro ao processar o e-mail para ${user.nome}. Deseja continuar com os próximos?`)) {
+          break; // Interrompe o loop se o usuário cancelar
+        }
+      }
+    }
+  };
 
 
   const handleSync = useCallback(async (isAuto = false) => {
@@ -365,7 +462,7 @@ export default function Dashboard() {
             <h3 style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.7px' }}>Progresso do Fechamento</h3>
             <button onClick={() => setExpandedChart('progresso')} style={{ color: 'var(--text-dim)' }} className="hover:opacity-80"><Maximize2 className="w-3.5 h-3.5" /></button>
           </div>
-          <div className="flex items-center justify-center gap-6">
+          <div className="flex items-center justify-center gap-6 relative">
             <div className="relative w-[360px] h-[360px] shrink-0">
               <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90" style={{ filter: 'drop-shadow(0 0 14px rgba(53,218,179,0.18))' }}>
                 <defs>
@@ -376,13 +473,30 @@ export default function Dashboard() {
                   <linearGradient id="gradConcluidasAtraso" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stopColor="#f5b64d"/><stop offset="100%" stopColor="#f3a832"/></linearGradient>
                 </defs>
                 <circle cx="50" cy="50" r="43" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="14"/>
-                {(() => { let acc = 0; const segments = [
-                  { v: kpis.atrasadas, grad: 'url(#gradAtraso)' },
-                  { v: kpis.pendentes, grad: 'url(#gradPend)' },
-                  { v: kpis.emAndamento, grad: 'url(#gradAnd)' },
-                  { v: kpis.concluidasComAtraso, grad: 'url(#gradConcluidasAtraso)' },
-                  { v: kpis.concluidasNoPrazo, grad: 'url(#gradOk)' },
-                ]; return segments.map((seg, i) => { const len = (seg.v / totalChart) * (2 * Math.PI * 43); const off = acc; acc += len; return <circle key={i} cx="50" cy="50" r="43" fill="none" stroke={seg.grad} strokeWidth="14" strokeDasharray={`${len} ${2 * Math.PI * 43}`} strokeDashoffset={-off} transform="rotate(-90 50 50)" strokeLinecap="round" className="transition-all duration-1000 ease-out"/>; }); })()}
+                {(() => {
+                  let acc = 0;
+                  const segments = [
+                    { v: kpis.atrasadas, grad: 'url(#gradAtraso)', label: 'Atrasadas' },
+                    { v: kpis.pendentes, grad: 'url(#gradPend)', label: 'Pendentes' },
+                    { v: kpis.emAndamento, grad: 'url(#gradAnd)', label: 'Em Andamento' },
+                    { v: kpis.concluidasComAtraso, grad: 'url(#gradConcluidasAtraso)', label: 'Concluídas c/ Atraso' },
+                    { v: kpis.concluidasNoPrazo, grad: 'url(#gradOk)', label: 'Concluídas no Prazo' },
+                  ];
+                  return segments.map((seg, i) => {
+                    const len = (seg.v / totalChart) * (2 * Math.PI * 43); const off = acc; acc += len;
+                    return (
+                      <circle
+                        key={i}
+                        onMouseEnter={(e) => setTooltip({ show: true, content: `${seg.label}: ${seg.v}`, x: e.clientX, y: e.clientY })}
+                        onMouseLeave={() => setTooltip({ show: false, content: '', x: 0, y: 0 })}
+                        onMouseMove={(e) => setTooltip(prev => ({ ...prev, x: e.clientX, y: e.clientY }))}
+                        cx="50" cy="50" r="43" fill="none" stroke={seg.grad} strokeWidth="14"
+                        strokeDasharray={`${len} ${2 * Math.PI * 43}`} strokeDashoffset={-off} transform="rotate(-90 50 50)"
+                        strokeLinecap="round" className="transition-all duration-1000 ease-out cursor-pointer"
+                      />
+                    );
+                  });
+                })()}
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
                 <span className="text-4xl font-bold" style={{ fontFamily: 'var(--font-display)', color: 'var(--text)' }}>{kpis.percentualConcluido}%</span>
@@ -519,6 +633,14 @@ export default function Dashboard() {
           <div className="flex items-center justify-between mb-4 cursor-pointer" onClick={() => setShowResponsavel(!showResponsavel)}>
             <div className="flex items-center gap-2">
               <h3 className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Desempenho por Responsável</h3>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleSendMassPerformanceEmail();
+                }}
+                className="btn btn-secondary !p-1.5 !h-auto" title="Enviar e-mail de performance em massa para todos os responsáveis listados">
+                <Send className="w-3.5 h-3.5" />
+              </button>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={(e) => { e.stopPropagation(); setExpandedChart('responsavel'); }} style={{ color: 'var(--text-dim)' }} className="hover:opacity-80"><Maximize2 className="w-3.5 h-3.5" /></button>
@@ -531,10 +653,19 @@ export default function Dashboard() {
                 <p className="text-sm text-center py-4" style={{ color: 'var(--text-dim)' }}>Nenhum dado disponível</p>
               ) : (
                 kpis.desempenhoPorResponsavel.map((item, idx) => (
-                  <div key={idx} onClick={() => setSelectedUser(item.nome)} className="cursor-pointer p-2 rounded-lg transition-colors" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
-                    <div className="flex justify-between text-xs mb-1.5">
-                      <span className="font-medium" style={{ color: 'var(--text)' }}>{item.nome}</span>
-                      <span style={{ color: 'var(--text-dim)' }}>{item.concluidas}/{item.total} ({item.percentual}%)</span>
+                  <div key={idx} className="p-2 rounded-lg transition-colors" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                    <div className="flex justify-between items-center text-xs mb-1.5">
+                      <span onClick={() => setSelectedUser(item.nome)} className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--text)' }}>{item.nome}</span>
+                      <div className="flex items-center gap-2">
+                        <span style={{ color: 'var(--text-dim)' }}>{item.concluidas}/{item.total} ({item.percentual}%)</span>
+                        <button 
+                          onClick={() => handleSendPerformanceEmail(item.nome)}
+                          className="p-1 rounded-md hover:bg-blue-500/20 text-blue-400"
+                          title={`Enviar e-mail de performance para ${item.nome}`}
+                        >
+                          <Mail className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                     <div className="progress-bar"><div className="progress-fill" style={{ width: `${item.percentual}%` }}></div></div>
                   </div>
@@ -586,6 +717,13 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {tooltip.show && (
+        <div
+          className="fixed z-50 px-3 py-1.5 text-xs font-medium text-white bg-slate-800 rounded-md shadow-lg pointer-events-none"
+          style={{ top: tooltip.y + 15, left: tooltip.x + 15 }}
+        >{tooltip.content}</div>
+      )}
 
       {/* Expanded Modal */}
       {expandedChart && (
@@ -769,7 +907,7 @@ function StatusBadge({ color, label, count, onClick, className = '' }) {
   );
 }
 
-function RadarModal({ userName, allEtapas, onClose }) {
+function RadarModal({ userName, allEtapas, onClose, isForExport = false }) {
   const [selectedPontos, setSelectedPontos] = useState(null); // 'positivo' | 'negativo' | null
   const userTasks = allEtapas.filter(e => e.responsavel === userName);
   const total = userTasks.length;
@@ -885,16 +1023,18 @@ function RadarModal({ userName, allEtapas, onClose }) {
   const points = metrics.map((m, i) => getPoint(m.value, i)).map(p => `${p.x},${p.y}`).join(' ');
 
   return (
-    <div className="modal-overlay">
-      <div className="modal-content" style={{ maxWidth: '500px' }}>
+    <div className={!isForExport ? "modal-overlay" : ""}>
+      <div className={!isForExport ? "modal-content" : ""} style={{ maxWidth: '500px', background: isForExport ? 'transparent' : undefined }}>
         <div className="flex items-center justify-between p-5" style={{ borderBottom: '1px solid var(--border)' }}>
           <div>
             <h3 className="text-base font-semibold" style={{ fontFamily: 'var(--font-display)' }}>Radar de Performance</h3>
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{userName}</p>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg transition-colors" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
-            <X className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
-          </button>
+          {!isForExport && (
+            <button onClick={onClose} className="p-1.5 rounded-lg transition-colors" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+              <X className="w-4 h-4" style={{ color: 'var(--text-muted)' }} />
+            </button>
+          )}
         </div>
         <div className="p-6 flex flex-col items-center">
           <div className="relative w-[340px] h-[340px] mx-auto">
@@ -980,7 +1120,7 @@ function RadarModal({ userName, allEtapas, onClose }) {
       </div>
 
       {/* Modal de Detalhes dos Pontos */}
-      {selectedPontos && (
+      {selectedPontos && !isForExport && (
         <PontosDetalhesModal
           tipo={selectedPontos}
           userName={userName}
