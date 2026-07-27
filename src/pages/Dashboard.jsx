@@ -49,7 +49,7 @@ export default function Dashboard() {
   const [syncing, setSyncing] = useState(false);
   const isSyncingRef = useRef(false);
   const [autoSyncing, setAutoSyncing] = useState(false);
-  const [showResponsavel, setShowResponsavel] = useState(false);
+  const [showResponsavel, setShowResponsavel] = useState(true);
   const [showApoio, setShowApoio] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const pageRef = useRef(null);
@@ -412,7 +412,8 @@ export default function Dashboard() {
   if (!autorizado) return <div className="flex flex-col items-center justify-center h-96"><p style={{ color: 'var(--text-muted)' }}>Acesso não autorizado.</p></div>;
 
   return (
-    <div className="animate-fadeIn" ref={pageRef}>
+    <>
+      <div className="animate-fadeIn" ref={pageRef}>
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
@@ -455,15 +456,15 @@ export default function Dashboard() {
       </div>
 
       {/* Metrics Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-6">
-        {/* Donut Chart */}
-        <div className="card lg:col-span-2 p-5">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+        {/* Progresso do Fechamento (Altura Reduzida) */}
+        <div className="card p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.7px' }}>Progresso do Fechamento</h3>
             <button onClick={() => setExpandedChart('progresso')} style={{ color: 'var(--text-dim)' }} className="hover:opacity-80"><Maximize2 className="w-3.5 h-3.5" /></button>
           </div>
-          <div className="flex items-center justify-center gap-6 relative">
-            <div className="relative w-[360px] h-[360px] shrink-0">
+          <div className="flex items-center justify-center gap-4 relative h-[280px]">
+            <div className="relative w-[280px] h-[280px] shrink-0">
               <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90" style={{ filter: 'drop-shadow(0 0 14px rgba(53,218,179,0.18))' }}>
                 <defs>
                   <linearGradient id="gradAtraso" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stopColor="#fb7169"/><stop offset="100%" stopColor="#f5b64d"/></linearGradient>
@@ -516,10 +517,63 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+        {/* Atividades Concluídas (Altura Reduzida) */}
+        <div className="card p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <ListChecks className="w-4 h-4" style={{ color: 'var(--accent)' }} />
+              <h3 className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Atividades Concluídas</h3>
+            </div>
+            <span className="text-xs" style={{ color: 'var(--text-dim)' }}>{kpis.concluidas} finalizadas</span>
+          </div>
+          <div className="h-[280px] overflow-hidden relative group">
+            <div className="flex flex-col gap-3 absolute top-0 animate-scroll">
+              {[
+                ...etapas.filter(e => e.status === 'concluido' || e.status === 'concluido_atraso').sort((a, b) => new Date(b.dataReal) - new Date(a.dataReal)),
+                ...etapas.filter(e => e.status === 'concluido' || e.status === 'concluido_atraso').sort((a, b) => new Date(b.dataReal) - new Date(a.dataReal))
+              ].map((item, idx) => (
+                <div key={idx} className="flex items-center justify-between p-3 rounded-lg" style={{ background: 'rgba(53, 218, 179, 0.07)', border: '1px solid rgba(53, 218, 179, 0.1)'}}>
+                  <div className="flex items-center gap-3">
+                    <CheckCircle2 className="w-5 h-5" style={{ color: 'var(--accent)' }} />
+                    <div>
+                      <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>{item.nome}</p>
+                      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{item.area} • {item.executadoPor}</p>
+                    </div>
+                  </div>
+                  <span className="text-xs font-mono" style={{ color: 'var(--text-dim)' }}>{item.dataReal ? new Date(item.dataReal).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit'}) : ''}</span>
+                </div>
+              ))}
+            </div>
+            <div className="absolute top-0 left-0 w-full h-4 bg-gradient-to-b from-[var(--surface)] to-transparent pointer-events-none"></div>
+            <div className="absolute bottom-0 left-0 w-full h-4 bg-gradient-to-t from-[var(--surface)] to-transparent pointer-events-none"></div>
+          </div>
+        </div>
+        <div className="card p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Principais Gargalos</h3>
+                <button onClick={() => setExpandedChart('gargalos')} style={{ color: 'var(--text-dim)' }} className="hover:opacity-80"><Maximize2 className="w-3.5 h-3.5" /></button>
+              </div>
+              <div className="flex flex-col gap-3 h-[280px] overflow-y-auto custom-scrollbar pr-2">
+                {kpis.topGargalos.length === 0 ? (
+                  <p className="text-sm text-center py-4" style={{ color: 'var(--text-dim)' }}>Nenhum gargalo identificado</p>
+                ) : (
+                  kpis.topGargalos.map((item, idx) => (
+                    <div key={idx} className="flex items-center justify-between py-2" style={{ borderBottom: '1px solid var(--border)' }}>
+                      <div className="flex items-center gap-2">
+                        <span className="w-5 h-5 flex items-center justify-center rounded text-[10px]" style={{ fontFamily: 'var(--font-mono)', background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--text-dim)' }}>{idx+1}</span>
+                        <span className="text-sm font-medium" style={{ color: 'var(--text)' }}>{item.area}</span>
+                      </div>
+                      <span className="badge badge-danger">{item.count} atrasadas</span>
+                    </div>
+                  ))
+                )}
+              </div>
+        </div>
+      </div>
 
-        {/* Metric Cards */}
-        <div className="lg:col-span-3 flex flex-col gap-4">
-          <div className="grid grid-cols-2 gap-4">
+      {/* KPI Cards (2 colunas) */}
+      {/* KPI Cards (4 colunas) */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
             <MetricCard
               title="Conclusão Geral"
               value={`${kpis.percentualConcluido}%`}
@@ -552,129 +606,46 @@ export default function Dashboard() {
               chipColor="warning"
               sparkline={[120, 130, 140, 135, 145, 150, 146, kpis.mediaAtraso]}
             />
-          </div>
-
-          {/* Bottom row: Area / Gargalos */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="card p-5" onDoubleClick={() => setDesempenhoMode(prev => prev === 'responsavel' ? 'executado' : 'responsavel')}>
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h3 className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>{desempenhoLabel}</h3>
-                  <p className="text-[9px] mt-1" style={{ color: 'var(--text-dim)' }}>Dois cliques para alternar entre Responsável e Executado Por</p>
-                </div>
-                <button onClick={() => setExpandedChart('area')} style={{ color: 'var(--text-dim)' }} className="hover:opacity-80"><Maximize2 className="w-3.5 h-3.5" /></button>
-              </div>
-              <div className="h-[130px] flex items-end gap-2 overflow-x-auto pb-2" style={{ scrollbarWidth: 'thin' }}>
-                {desempenhoData.length === 0 ? (
-                  <div className="w-full h-full flex items-center justify-center text-sm" style={{ color: 'var(--text-dim)' }}>Nenhum dado disponível</div>
-                ) : (
-                  desempenhoData.map((item, idx) => (
-                    <div key={idx} className="flex flex-col items-center gap-1.5 min-w-[40px] flex-1 h-full justify-end group cursor-pointer" onClick={() => { setSelectedArea(item.nome); setSelectedAreaType(desempenhoMode); }}>
-                      <span className="text-[10px] font-bold" style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>{item.percentual}%</span>
-                      <div className="w-full flex-1 rounded-t-md relative overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                        <div className="absolute bottom-0 left-0 right-0 rounded-t-md transition-all duration-500" style={{ height: `${item.percentual}%`, background: 'linear-gradient(180deg, var(--accent), var(--accent-2))', boxShadow: '0 0 12px rgba(53,218,179,0.2)' }} />
-                      </div>
-                      <span className="text-[9px] text-center truncate w-full max-w-[50px]" style={{ color: 'var(--text-dim)' }}>{item.nome.split(' ')[0]}</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-            <div className="card p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Principais Gargalos</h3>
-                <button onClick={() => setExpandedChart('gargalos')} style={{ color: 'var(--text-dim)' }} className="hover:opacity-80"><Maximize2 className="w-3.5 h-3.5" /></button>
-              </div>
-              <div className="flex flex-col gap-3">
-                {kpis.topGargalos.length === 0 ? (
-                  <p className="text-sm text-center py-4" style={{ color: 'var(--text-dim)' }}>Nenhum gargalo identificado</p>
-                ) : (
-                  kpis.topGargalos.map((item, idx) => (
-                    <div key={idx} className="flex items-center justify-between py-2" style={{ borderBottom: '1px solid var(--border)' }}>
-                      <div className="flex items-center gap-2">
-                        <span className="w-5 h-5 flex items-center justify-center rounded text-[10px]" style={{ fontFamily: 'var(--font-mono)', background: 'var(--surface-2)', border: '1px solid var(--border)', color: 'var(--text-dim)' }}>{idx+1}</span>
-                        <span className="text-sm font-medium" style={{ color: 'var(--text)' }}>{item.area}</span>
-                      </div>
-                      <span className="badge badge-danger">{item.count} atrasadas</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Evolution by Company */}
-      <div className="card p-5 mb-6">
-        <div className="flex items-center justify-between mb-5">
-          <h3 className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Evolução por Empresa</h3>
-          <button onClick={() => setExpandedChart('empresas')} style={{ color: 'var(--text-dim)' }} className="hover:opacity-80"><Maximize2 className="w-3.5 h-3.5" /></button>
-        </div>
-        {kpis.desempenhoPorEmpresa.length === 0 ? (
-          <p className="text-sm text-center py-4" style={{ color: 'var(--text-dim)' }}>Nenhum dado disponível</p>
-        ) : (
-          <div className="flex flex-col gap-4">
-            {kpis.desempenhoPorEmpresa.map((item, idx) => (
-              <div key={idx} className="flex items-center gap-4">
-                <span className="text-sm font-semibold w-[120px] shrink-0" style={{ color: 'var(--text)' }}>{item.nome}</span>
-                <div className="progress-bar flex-1"><div className="progress-fill" style={{ width: `${item.percentual}%` }}></div></div>
-                <span className="text-sm font-bold w-[40px] text-right" style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>{item.percentual}%</span>
-                <span className="text-xs w-[80px] text-right" style={{ color: 'var(--text-dim)' }}>{item.concluidas}/{item.total}</span>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
       {/* Performance by Responsible & Support Ranking */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <div className="card p-5">
-          <div className="flex items-center justify-between mb-4 cursor-pointer" onClick={() => setShowResponsavel(!showResponsavel)}>
+          <div className="flex items-center justify-between mb-4 cursor-pointer" onClick={() => setShowResponsavel(prev => !prev)}>
             <div className="flex items-center gap-2">
               <h3 className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Desempenho por Responsável</h3>
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleSendMassPerformanceEmail();
-                }}
-                className="btn btn-secondary !p-1.5 !h-auto" title="Enviar e-mail de performance em massa para todos os responsáveis listados">
+                onClick={(event) => { event.stopPropagation(); handleSendMassPerformanceEmail(); }}
+                className="btn btn-secondary !p-1.5 !h-auto"
+                title="Enviar e-mail de performance para todos os responsáveis"
+              >
                 <Send className="w-3.5 h-3.5" />
               </button>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={(e) => { e.stopPropagation(); setExpandedChart('responsavel'); }} style={{ color: 'var(--text-dim)' }} className="hover:opacity-80"><Maximize2 className="w-3.5 h-3.5" /></button>
+              <button onClick={(event) => { event.stopPropagation(); setExpandedChart('responsavel'); }} style={{ color: 'var(--text-dim)' }} className="hover:opacity-80"><Maximize2 className="w-3.5 h-3.5" /></button>
               {showResponsavel ? <ChevronUp className="w-4 h-4" style={{ color: 'var(--text-dim)' }} /> : <ChevronDown className="w-4 h-4" style={{ color: 'var(--text-dim)' }} />}
             </div>
           </div>
           {showResponsavel && (
-            <div className="flex flex-col gap-3 max-h-[260px] overflow-y-auto pr-1" style={{ scrollbarWidth: 'thin' }}>
+            <div className="flex flex-col gap-3 max-h-[260px] overflow-y-auto pr-1 custom-scrollbar">
               {kpis.desempenhoPorResponsavel.length === 0 ? (
                 <p className="text-sm text-center py-4" style={{ color: 'var(--text-dim)' }}>Nenhum dado disponível</p>
-              ) : (
-                kpis.desempenhoPorResponsavel.map((item, idx) => (
-                  <div key={idx} className="p-2 rounded-lg transition-colors" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
-                    <div className="flex justify-between items-center text-xs mb-1.5">
-                      <span onClick={() => setSelectedUser(item.nome)} className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--text)' }}>{item.nome}</span>
-                      <div className="flex items-center gap-2">
-                        <span style={{ color: 'var(--text-dim)' }}>{item.concluidas}/{item.total} ({item.percentual}%)</span>
-                        <button 
-                          onClick={() => handleSendPerformanceEmail(item.nome)}
-                          className="p-1 rounded-md hover:bg-blue-500/20 text-blue-400"
-                          title={`Enviar e-mail de performance para ${item.nome}`}
-                        >
-                          <Mail className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+              ) : kpis.desempenhoPorResponsavel.map((item, idx) => (
+                <div key={idx} className="p-2 rounded-lg" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                  <div className="flex justify-between items-center text-xs mb-1.5">
+                    <span onClick={() => setSelectedUser(item.nome)} className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--text)' }}>{item.nome}</span>
+                    <div className="flex items-center gap-2">
+                      <span style={{ color: 'var(--text-dim)' }}>{item.concluidas}/{item.total} ({item.percentual}%)</span>
+                      <button onClick={() => handleSendPerformanceEmail(item.nome)} className="p-1 rounded-md hover:bg-blue-500/20 text-blue-400" title={`Enviar e-mail de performance para ${item.nome}`}><Mail className="w-3.5 h-3.5" /></button>
                     </div>
-                    <div className="progress-bar"><div className="progress-fill" style={{ width: `${item.percentual}%` }}></div></div>
                   </div>
-                ))
-              )}
+                  <div className="progress-bar"><div className="progress-fill" style={{ width: `${item.percentual}%` }} /></div>
+                </div>
+              ))}
             </div>
           )}
         </div>
-
         <div className="card p-5">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
@@ -868,12 +839,37 @@ export default function Dashboard() {
       {selectedGargalo && <GargalosDetailsModal areaName={selectedGargalo} etapas={etapas} onClose={() => setSelectedGargalo(null)} />}
       {selectedApoio && <ApoioDetailsModal apoiadorName={selectedApoio} etapas={etapas} onClose={() => setSelectedApoio(null)} />}
     </div>
+    <style>{`
+        @keyframes scroll {
+          from { transform: translateY(0); }
+          to { transform: translateY(-50%); }
+        }
+        .animate-scroll {
+          /* A duração é calculada com base no número de itens para manter uma velocidade constante */
+          animation: scroll ${kpis.concluidas * 2.5}s linear infinite;
+        }
+        .group:hover .animate-scroll {
+          animation-play-state: paused;
+        }
+        
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 8px;
+          height: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: var(--border);
+          border-radius: 4px;
+        }
+      `}</style>
+    </>
   );
 }
 
 // --- Helper Components ---
 function MetricCard({ title, value, subtitle, icon, chipColor, sparkline }) {
-  const sparkPoints = sparkline?.join(',') || '';
   return (
     <div className="card p-4 min-h-[120px] flex flex-col justify-between">
       <div>
@@ -1561,7 +1557,7 @@ function processData(data, existingSteps = []) {
     if (!valor || String(valor).trim() === '') return null;
     const v = String(valor).trim();
     if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) return v;
-    const dmy = v.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})(?:[\sT]+(\d{1,2}):(\d{2}))?/);
+    const dmy = v.match(/^(\d{1,2})\/\-\.\/\-\.(?:[\sT]+(\d{1,2}):(\d{2}))?/);
     if (dmy) {
       const dia = parseInt(dmy[1],10), mes = parseInt(dmy[2],10);
       let ano = parseInt(dmy[3],10);
