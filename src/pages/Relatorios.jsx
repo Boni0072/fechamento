@@ -3,7 +3,7 @@ import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
 import { getDatabase, ref, onValue } from 'firebase/database';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
-import { getPeriodos, getEtapas, getStatusLabel } from '../services/database';
+import { getEtapas, getStatusLabel } from '../services/database';
 import { FileText, Download, BarChart3, Users, AlertTriangle, Building2, Clock } from 'lucide-react';
 import { format } from 'date-fns';
 import { checkPermission } from './permissionUtils';
@@ -22,7 +22,6 @@ export default function Relatorios() {
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [periodos, setPeriodos] = useState([]);
   const [periodoSelecionado, setPeriodoSelecionado] = useState(null);
-  const [allPeriodsMap, setAllPeriodsMap] = useState({});
   const [stepsByCompany, setStepsByCompany] = useState({});
   const [etapas, setEtapas] = useState([]);
   const [indicadores, setIndicadores] = useState(null);
@@ -43,56 +42,6 @@ export default function Relatorios() {
     }
   }, [authUser, empresaAtual]);
 
-
-  useEffect(() => {
-    if (!empresasParaBuscar || empresasParaBuscar.length === 0) {
-      setPeriodos([]);
-      setPeriodoSelecionado(null);
-      setAllPeriodsMap({});
-      return;
-    }
-
-    setAllPeriodsMap({});
-    const unsubs = [];
-    empresasParaBuscar.forEach(emp => {
-      const unsubscribe = getPeriodos(emp.id, (data) => {
-        setAllPeriodsMap(prev => ({ ...prev, [emp.id]: data || [] }));
-      });
-      unsubs.push(unsubscribe);
-    });
-
-    return () => unsubs.forEach(u => u());
-  }, [empresasParaBuscar]);
-
-  useEffect(() => {
-    const allPeriods = Object.values(allPeriodsMap).flat();
-    const uniqueMap = new Map();
-    
-    allPeriods.forEach(p => {
-      const key = `${p.ano}-${p.mes}`;
-      if (!uniqueMap.has(key)) {
-        uniqueMap.set(key, { 
-          id: key, 
-          mes: p.mes, 
-          ano: p.ano 
-        });
-      }
-    });
-
-    const sorted = Array.from(uniqueMap.values()).sort((a, b) => {
-      if (b.ano !== a.ano) return b.ano - a.ano;
-      return b.mes - a.mes;
-    });
-
-    setPeriodos(sorted);
-    
-    if (!periodoSelecionado && sorted.length > 0) {
-      setPeriodoSelecionado(sorted[0]);
-    } else if (periodoSelecionado) {
-        const exists = sorted.find(p => p.id === periodoSelecionado.id);
-        if (!exists && sorted.length > 0) setPeriodoSelecionado(sorted[0]);
-    }
-  }, [allPeriodsMap]);
 
   useEffect(() => {
     if (!empresasParaBuscar || empresasParaBuscar.length === 0) {
@@ -125,8 +74,24 @@ export default function Relatorios() {
   }, [empresasParaBuscar]);
 
   useEffect(() => {
+    const periodosPorData = new Map();
+    Object.values(stepsByCompany).flat().forEach(etapa => {
+      const dataPrevista = new Date(etapa.dataPrevista);
+      if (!isNaN(dataPrevista.getTime())) {
+        const mes = dataPrevista.getMonth() + 1;
+        const ano = dataPrevista.getFullYear();
+        periodosPorData.set(`${mes}-${ano}`, { id: `${mes}-${ano}`, mes, ano });
+      }
+    });
+    const periodosOrdenados = Array.from(periodosPorData.values()).sort((a, b) => b.ano - a.ano || b.mes - a.mes);
+    const periodosDisponiveis = [{ id: 'todos', mes: 'Todos', ano: '' }, ...periodosOrdenados];
+    setPeriodos(periodosDisponiveis);
+    setPeriodoSelecionado(prev => periodosDisponiveis.find(p => p.id === prev?.id) || periodosDisponiveis[0]);
+  }, [stepsByCompany]);
+
+  useEffect(() => {
     const allSteps = Object.values(stepsByCompany).flat();
-    if (periodoSelecionado) {
+    if (periodoSelecionado && periodoSelecionado.id !== 'todos') {
       const filteredSteps = allSteps.filter(etapa => {
           if (!etapa.dataPrevista) return false;
           const etapaDate = new Date(etapa.dataPrevista);
@@ -453,18 +418,24 @@ export default function Relatorios() {
         </div>
         
         <div className="flex gap-3">
-          <select
+          <div className="period-filter-group">
+            <span className="period-filter-label">Período</span>
+            <select
             value={periodoSelecionado?.id || ''}
             onChange={(e) => {
               const periodo = periodos.find(p => p.id === e.target.value);
               setPeriodoSelecionado(periodo);
             }}
-            className="form-input"
+            className="period-filter"
+            aria-label="Selecionar período"
           >
             {periodos.map(p => (
-              <option key={p.id} value={p.id}>{p.mes}/{p.ano}</option>
+              <option key={p.id} value={p.id}>
+                {p.id === 'todos' ? 'Todos os Períodos' : new Date(p.ano, p.mes - 1).toLocaleString('pt-BR', { month: 'long' }).replace(/^\w/, c => c.toUpperCase()) + `/${p.ano}`}
+              </option>
             ))}
-          </select>
+            </select>
+          </div>
           
           <button
             onClick={exportarCSV}

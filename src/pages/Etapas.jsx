@@ -3,7 +3,7 @@ import { useNavigate} from 'react-router-dom';
 import { getFirestore, doc, onSnapshot, collection, getDocs, writeBatch, updateDoc, query, where, deleteDoc, setDoc } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
-import { getPeriodos, getResponsaveis, criarEtapa, atualizarEtapa, deletarEtapa, getStatusColor, getStatusLabel } from '../services/database';
+import { getResponsaveis, criarEtapa, atualizarEtapa, deletarEtapa, getStatusColor, getStatusLabel } from '../services/database';
 import { Plus, X, Filter, Settings, CheckCircle, RotateCcw, Search } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { checkPermission } from "./permissionUtils";
@@ -94,41 +94,7 @@ export default function Etapas() {
       setEmpresaDados(null);
     }
 
-    const unsubscribes = [];
-    const allPeriodsMap = new Map();
-
-    empresasParaBuscar.forEach(emp => {
-        const unsub = getPeriodos(emp.id, (data) => {
-          data.forEach(p => {
-            const key = `${p.mes}-${p.ano}`;
-            if (!allPeriodsMap.has(key)) {
-              allPeriodsMap.set(key, { ...p, id: key, realId: p.id });
-            }
-          });
-          
-          const sortedData = Array.from(allPeriodsMap.values()).sort((a, b) => {
-            if (b.ano !== a.ano) return b.ano - a.ano;
-            if (b.mes !== a.mes) return b.mes - a.mes;
-            return 0;
-          });
-          
-          setPeriodos(sortedData);
-          setPeriodoSelecionado(prev => {
-            if (!prev && sortedData.length > 0) return sortedData[0];
-            if (prev) {
-              const match = sortedData.find(p => p.mes === prev.mes && p.ano === prev.ano);
-              return match || sortedData[0] || null;
-            }
-            return null;
-          });
-        });
-        unsubscribes.push(unsub);
-      });
-    
-    return () => {
-      unsubEmpresa();
-      unsubscribes.forEach(u => u());
-    };
+    return () => unsubEmpresa();
   }, [empresasParaBuscar, empresaAtual]);
 
   useEffect(() => {
@@ -156,6 +122,20 @@ export default function Etapas() {
         }));
         setEtapas(allEtapas);
 
+        const periodosPorData = new Map();
+        allEtapas.forEach(etapa => {
+          const dataPrevista = new Date(etapa.dataPrevista);
+          if (!isNaN(dataPrevista.getTime())) {
+            const mes = dataPrevista.getMonth() + 1;
+            const ano = dataPrevista.getFullYear();
+            periodosPorData.set(`${mes}-${ano}`, { id: `${mes}-${ano}`, mes, ano });
+          }
+        });
+        const periodosOrdenados = Array.from(periodosPorData.values()).sort((a, b) => b.ano - a.ano || b.mes - a.mes);
+        const periodosDisponiveis = [{ id: 'todos', mes: 'Todos', ano: '' }, ...periodosOrdenados];
+        setPeriodos(periodosDisponiveis);
+        setPeriodoSelecionado(prev => periodosDisponiveis.find(p => p.id === prev?.id) || periodosDisponiveis[0]);
+
         // Deriva áreas e responsáveis para os filtros a partir dos dados processados
         const uniqueAreas = [...new Set(allEtapas.map(e => e.area).filter(Boolean))].sort();
         setAreas(uniqueAreas.map((a, i) => ({ id: i, nome: a })));
@@ -164,6 +144,8 @@ export default function Etapas() {
         setResponsaveis(uniqueResps.map((r, i) => ({ id: i, nome: r })));
       } else {
         setEtapas([]);
+        setPeriodos([]);
+        setPeriodoSelecionado(null);
         setAreas([]);
         setResponsaveis([]);
       }
@@ -305,8 +287,8 @@ export default function Etapas() {
       return;
     }
     
-    if (!periodoSelecionado) {
-      alert("Selecione um período.");
+    if (!periodoSelecionado || periodoSelecionado.id === 'todos') {
+      alert("Selecione um período específico para criar etapas.");
       return;
     }
 
@@ -380,6 +362,10 @@ export default function Etapas() {
   };
 
   const etapasFiltradas = etapas.filter(etapa => {
+    if (periodoSelecionado?.id !== 'todos') {
+      const dataPrevista = new Date(etapa.dataPrevista);
+      if (isNaN(dataPrevista.getTime()) || dataPrevista.getMonth() + 1 !== Number(periodoSelecionado?.mes) || dataPrevista.getFullYear() !== Number(periodoSelecionado?.ano)) return false;
+    }
     if (filtros.area && etapa.area !== filtros.area) return false;
     if (filtros.responsavel && etapa.responsavel !== filtros.responsavel) return false;
     if (filtros.status && etapa.status !== filtros.status) return false;
@@ -405,18 +391,24 @@ export default function Etapas() {
         </div>
         
         <div className="flex gap-3">
-          <select
+          <div className="period-filter-group">
+            <span className="period-filter-label">Período</span>
+            <select
             value={periodoSelecionado?.id || ''}
             onChange={(e) => {
               const periodo = periodos.find(p => p.id === e.target.value);
               setPeriodoSelecionado(periodo);
             }}
-            className="form-input"
+            className="period-filter"
+            aria-label="Selecionar período"
           >
             {periodos.map(p => (
-              <option key={p.id} value={p.id}>{p.mes}/{p.ano}</option>
+              <option key={p.id} value={p.id}>
+                {p.id === 'todos' ? 'Todos os Períodos' : new Date(p.ano, p.mes - 1).toLocaleString('pt-BR', { month: 'long' }).replace(/^\w/, c => c.toUpperCase()) + `/${p.ano}`}
+              </option>
             ))}
-          </select>
+            </select>
+          </div>
           
           <button
             onClick={() => navigate('/empresas')}
@@ -956,7 +948,8 @@ export default function Etapas() {
 
 // Função auxiliar para processar dados (Reutiliza lógica da Importação)
 function processData(data, existingSteps = []) {
-  if (!Array.isArray(data)) return [];
+  const dataArray = Array.isArray(data) ? data : Object.values(data || {});
+  if (dataArray.length === 0) return [];
   const etapasValidadas = [];
   const chavesProcessadas = new Set();
   const usedIds = new Set(); // Rastreia IDs já vinculados para permitir códigos duplicados em tarefas diferentes
@@ -1071,9 +1064,11 @@ function processData(data, existingSteps = []) {
     return localDate.toISOString();
   };
 
-  data.forEach((row, index) => {
+  dataArray.forEach((row, index) => {
     const getVal = (keys) => {
-      const normalize = (k) => k ? String(k).toLowerCase().replace(/\s+/g, ' ').trim() : '';
+      const normalize = (k) => k
+        ? String(k).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim()
+        : '';
       for (const k of keys) {
         let val = row[k];
         if (val === undefined) {

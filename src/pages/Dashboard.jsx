@@ -421,16 +421,20 @@ export default function Dashboard() {
           <p style={{ color: 'var(--text-muted)' }} className="text-sm mt-1">Acompanhe o progresso do fechamento contábil</p>
         </div>
         <div className="flex items-center gap-3">
-          <select
+          <div className="period-filter-group">
+            <span className="period-filter-label">Período</span>
+            <select
             value={periodoSelecionado?.id || ''}
             onChange={(e) => { const p = periodos.find(p => p.id === e.target.value); setPeriodoSelecionado(p); }}
-            className="!py-2 !px-4 text-sm"
+            className="period-filter"
+            aria-label="Selecionar período"
           >
             {periodos.map(p => {
               const label = p.id === 'todos' ? 'Todos os Períodos' : new Date(p.ano, p.mes-1).toLocaleString('pt-BR', { month: 'long' }).replace(/^\w/, c => c.toUpperCase()) + `/${p.ano}`;
               return <option key={p.id} value={p.id}>{label}</option>;
             })}
-          </select>
+            </select>
+          </div>
           <button
             onClick={async () => {
               if (!isFullscreen) {

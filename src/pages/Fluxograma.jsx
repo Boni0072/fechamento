@@ -416,14 +416,17 @@ export default function Fluxograma() {
           <p className="text-slate-500">Visualização interativa das etapas do fechamento contábil</p>
         </div>
         <div className="flex gap-3 items-center">
-          <select
+          <div className="period-filter-group">
+            <span className="period-filter-label">Período</span>
+            <select
             value={periodoSelecionado?.id || ''}
             onChange={(e) => {
               const selectedId = e.target.value;
               const periodo = periodos.find(p => p.id === selectedId);
               setPeriodoSelecionado(periodo);
             }}
-            className="px-4 py-2 border border-slate-200 rounded-lg bg-white shadow-sm"
+            className="period-filter"
+            aria-label="Selecionar período"
           >
             {periodos.map(p => {
               const label = p.id === 'todos' 
@@ -431,7 +434,8 @@ export default function Fluxograma() {
                 : new Date(p.ano, p.mes - 1).toLocaleString('pt-BR', { month: 'long' }).replace(/^\w/, c => c.toUpperCase()) + `/${p.ano}`;
               return <option key={p.id} value={p.id}>{label}</option>;
             })}
-          </select>
+            </select>
+          </div>
           <div className="bg-white px-4 py-2 rounded-lg shadow-sm flex items-center gap-3 border border-slate-200">
             <div className="relative w-10 h-10">
               <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">

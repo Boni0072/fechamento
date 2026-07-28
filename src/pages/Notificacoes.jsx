@@ -3,8 +3,8 @@ import { getFirestore, doc, onSnapshot, updateDoc, collection } from 'firebase/f
 import { getDatabase, ref, onValue } from 'firebase/database';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao'; // eslint-disable-line no-unused-vars
-import { getPeriodos, getResponsaveis } from '../services/database';
-import { Bell, Clock, AlertTriangle, Settings, Mail, Send, X, Mailbox, ChevronDown, ChevronUp } from 'lucide-react';
+import { getResponsaveis } from '../services/database';
+import { Bell, Clock, AlertTriangle, Settings, Mail, Send, X, Mailbox, ChevronDown, ChevronUp, ListChecks } from 'lucide-react';
 import { format, differenceInDays } from 'date-fns';
 import { checkPermission } from './permissionUtils';
 
@@ -15,6 +15,7 @@ export default function Notificacoes() {
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [periodos, setPeriodos] = useState([]);
   const [periodoSelecionado, setPeriodoSelecionado] = useState(null);
+  const [allEtapas, setAllEtapas] = useState([]);
   const [etapas, setEtapas] = useState([]);
   const [tab, setTab] = useState('alertas');
   const [responsaveisMap, setResponsaveisMap] = useState({});
@@ -27,7 +28,8 @@ export default function Notificacoes() {
     delayAlerts: true,
     daysNotice: 3
   });
-  const [mapaPeriodos, setMapaPeriodos] = useState({});
+  const [stepsByCompany, setStepsByCompany] = useState({});
+  const [periodosPorEmpresa, setPeriodosPorEmpresa] = useState({});
 
   const empresasParaBuscar = useMemo(() => {
     if (empresaAtual) return [empresaAtual];
@@ -59,83 +61,95 @@ export default function Notificacoes() {
 
   useEffect(() => {
     if (!empresasParaBuscar || empresasParaBuscar.length === 0) {
-        setPeriodos([]);
-        setPeriodoSelecionado(null);
-        setMapaPeriodos({});
-        return;
-    };
-
-    const unsubscribes = [];
-    const allPeriodsMap = new Map();
-
-    empresasParaBuscar.forEach(emp => {
-        const unsub = getPeriodos(emp.id, (data) => {
-          setMapaPeriodos(prev => ({ ...prev, [emp.id]: data }));
-          
-          data.forEach(p => {
-            const key = `${p.mes}-${p.ano}`;
-            if (!allPeriodsMap.has(key)) {
-              allPeriodsMap.set(key, { mes: p.mes, ano: p.ano, id: key });
-            }
-          });
-          
-          const sortedData = Array.from(allPeriodsMap.values()).sort((a, b) => {
-            if (b.ano !== a.ano) return b.ano - a.ano;
-            if (b.mes !== a.mes) return b.mes - a.mes;
-            return 0;
-          });
-          
-          setPeriodos(sortedData);
-          if (sortedData.length > 0 && !periodoSelecionado) {
-            setPeriodoSelecionado(sortedData[0]);
-          }
-        });
-        unsubscribes.push(unsub);
-      });
-    
-    return () => unsubscribes.forEach(u => u());
-  }, [empresasParaBuscar]);
-
-  useEffect(() => {
-    if (!empresasParaBuscar || empresasParaBuscar.length === 0 || !periodoSelecionado) {
-        setEtapas([]);
-        return;
-    };
+      setStepsByCompany({});
+      setAllEtapas([]);
+      return;
+    }
 
     const db = getDatabase();
     const unsubscribes = [];
-    const stepsByCompany = {};
 
     empresasParaBuscar.forEach(emp => {
         const tableRef = ref(db, `tenants/${emp.id}/tabelaGoogle`);
         const unsub = onValue(tableRef, (snapshot) => {
             const data = snapshot.val();
-            const dataArray = data ? (Array.isArray(data) ? data : Object.values(data)) : [];
-            
-            // Filtra pelo período selecionado para manter consistência
-            const filteredData = dataArray.filter(item => {
-                if (!periodoSelecionado) return true;
-                if (!item.dataPrevista) return false;
-                const d = new Date(item.dataPrevista);
-                return (d.getMonth() + 1) == periodoSelecionado.mes && d.getFullYear() == periodoSelecionado.ano;
-            });
-
-            // Deduplicação (Mesma lógica do Dashboard)
-            const uniqueMap = new Map();
-            filteredData.forEach(item => {
-                const normalizeVal = (str) => str ? String(str).trim().replace(/\s+/g, ' ').toLowerCase() : '';
-                const uniqueKey = `${item.codigo ? 'code:' + normalizeVal(item.codigo) : ''}|name:${normalizeVal(item.nome)}`;
-                if (!uniqueMap.has(uniqueKey)) uniqueMap.set(uniqueKey, item);
-            });
-
-            stepsByCompany[emp.id] = Array.from(uniqueMap.values()).map(e => ({ ...e, empresaId: emp.id, empresaNome: emp.nome }));
-            setEtapas(Object.values(stepsByCompany).flat());
+            const processed = data ? processData(data) : [];
+            setStepsByCompany(prev => ({
+              ...prev,
+              [emp.id]: processed.map(d => ({ ...d, empresaId: emp.id, empresaNome: emp.nome }))
+            }));
         });
         unsubscribes.push(unsub);
     });
     
     return () => unsubscribes.forEach(u => u());
-  }, [empresasParaBuscar, periodoSelecionado]);
+  }, [empresasParaBuscar]);
+
+  useEffect(() => {
+    if (!empresasParaBuscar || empresasParaBuscar.length === 0) {
+      setPeriodosPorEmpresa({});
+      return;
+    }
+
+    const firestore = getFirestore();
+    const unsubscribes = empresasParaBuscar.map(empresa => onSnapshot(
+      collection(firestore, 'tenants', empresa.id, 'periodos'),
+      snapshot => {
+        setPeriodosPorEmpresa(prev => ({
+          ...prev,
+          [empresa.id]: snapshot.docs.map(periodo => ({ id: periodo.id, ...periodo.data() }))
+        }));
+      }
+    ));
+
+    return () => unsubscribes.forEach(unsubscribe => unsubscribe());
+  }, [empresasParaBuscar]);
+
+  useEffect(() => {
+    const allSteps = Object.values(stepsByCompany).flat();
+    setAllEtapas(allSteps);
+  }, [stepsByCompany]);
+
+  useEffect(() => {
+    const periodsMap = new Map();
+    Object.values(periodosPorEmpresa).flat().forEach(periodo => {
+      const mes = parseInt(periodo.mes, 10);
+      const ano = parseInt(periodo.ano, 10);
+      if (mes >= 1 && mes <= 12 && ano) {
+        periodsMap.set(`${mes}-${ano}`, { id: `${mes}-${ano}`, mes, ano });
+      }
+    });
+    allEtapas.forEach(step => {
+      if (step.dataPrevista) {
+        const d = new Date(step.dataPrevista);
+        if (!isNaN(d.getTime())) {
+          const month = d.getMonth() + 1;
+          const year = d.getFullYear();
+          const key = `${month}-${year}`;
+          if (!periodsMap.has(key)) {
+            periodsMap.set(key, { id: key, mes: month, ano: year });
+          }
+        }
+      }
+    });
+    const sortedData = Array.from(periodsMap.values()).sort((a, b) => b.ano - a.ano || b.mes - a.mes);
+    const periodosDisponiveis = [{ id: 'todos', mes: 'Todos', ano: '' }, ...sortedData];
+    setPeriodos(periodosDisponiveis);
+    setPeriodoSelecionado(prev => periodosDisponiveis.find(p => p.id === prev?.id) || periodosDisponiveis[0]);
+  }, [allEtapas, periodosPorEmpresa]);
+
+  useEffect(() => {
+    if (periodoSelecionado && periodoSelecionado.id !== 'todos') {
+      const filtered = allEtapas.filter(e => {
+        if (!e.dataPrevista) return false;
+        const d = new Date(e.dataPrevista);
+        return (d.getMonth() + 1) == periodoSelecionado.mes && d.getFullYear() == periodoSelecionado.ano;
+      });
+      setEtapas(filtered);
+    } else {
+      setEtapas(allEtapas);
+    }
+  }, [allEtapas, periodoSelecionado]);
 
   // Busca responsáveis para obter os e-mails
   useEffect(() => {
@@ -420,18 +434,24 @@ export default function Notificacoes() {
         </div>
         
         <div className="flex items-center gap-3">
-          <select
+          <div className="period-filter-group">
+            <span className="period-filter-label">Período</span>
+            <select
             value={periodoSelecionado?.id || ''}
             onChange={(e) => {
               const periodo = periodos.find(p => p.id === e.target.value);
               setPeriodoSelecionado(periodo);
             }}
-            className="form-input"
+            className="period-filter"
+            aria-label="Selecionar período"
           >
             {periodos.map(p => (
-              <option key={p.id} value={p.id}>{p.mes}/{p.ano}</option>
+              <option key={p.id} value={p.id}>
+                {p.id === 'todos' ? 'Todos os Períodos' : new Date(p.ano, p.mes - 1).toLocaleString('pt-BR', { month: 'long' }).replace(/^\w/, c => c.toUpperCase()) + `/${p.ano}`}
+              </option>
             ))}
-          </select>
+            </select>
+          </div>
 
           <button
             onClick={handleOpenEmailModal}
@@ -472,7 +492,7 @@ export default function Notificacoes() {
                 <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>Etapas que vencem nos próximos {config.daysNotice} dias</p>
                 
                 {etapasProximasPrazo.length === 0 ? (
-                  <p className="text-center py-6" style={{ color: 'var(--text-muted)' }}>Nenhuma etapa próxima do prazo</p>
+                  <p className="text-center py-6" style={{ color: 'var(--text-muted)' }}>Nenhuma etapa próxima do prazo para o período selecionado.</p>
                 ) : (
                   <div className="space-y-2">
                     {etapasProximasPrazo.map((etapa, index) => {
@@ -524,7 +544,10 @@ export default function Notificacoes() {
                 <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>Etapas com prazo vencido</p>
                 
                 {etapasAtrasadas.length === 0 ? (
-                  <p className="text-center py-6" style={{ color: 'var(--text-muted)' }}>Nenhuma etapa atrasada</p>
+                  <div className="text-center py-6" style={{ color: 'var(--text-muted)' }}>
+                    <ListChecks className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                    <p>Nenhuma etapa atrasada para o período selecionado.</p>
+                  </div>
                 ) : (
                   <div className="space-y-2">
                     {etapasAtrasadas.map((etapa, index) => {
@@ -721,4 +744,120 @@ function TabButton({ active, onClick, icon, label }) {
       {label}
     </button>
   );
+}
+
+// Função auxiliar para processar dados (Reutiliza lógica da Importação/Dashboard)
+function processData(data) {
+  const dataArray = Array.isArray(data) ? data : Object.values(data || {});
+  if (dataArray.length === 0) return [];
+  const etapasValidadas = [];
+  const chavesProcessadas = new Set();
+
+  const formatarData = (valor) => {
+    if (valor === null || valor === undefined || String(valor).trim() === '') return null;
+    if (typeof valor === 'number') {
+      const date = new Date((Math.floor(valor + 0.001) - 25569) * 86400 * 1000 + 43200000);
+      return date.toISOString();
+    }
+    if (typeof valor === 'string') {
+      const v = valor.trim();
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) return v;
+      const dmy = v.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})(?:[\sT]+(\d{1,2}):(\d{2}))?/);
+      if (dmy) {
+        const dia = parseInt(dmy[1], 10), mes = parseInt(dmy[2], 10);
+        let ano = parseInt(dmy[3], 10);
+        if (ano < 100) ano += 2000;
+        const hora = dmy[4] ? parseInt(dmy[4], 10) : null;
+        const min = dmy[5] ? parseInt(dmy[5], 10) : null;
+        if (hora !== null) {
+          const date = new Date(ano, mes - 1, dia, hora, min || 0, 0);
+          if (!isNaN(date.getTime())) return date.toISOString();
+        } else {
+          const date = new Date(Date.UTC(ano, mes - 1, dia, 12, 0, 0));
+          if (!isNaN(date.getTime())) return date.toISOString();
+        }
+      }
+    }
+    return null;
+  };
+
+  const combinarDataHora = (dataISO, horaVal) => {
+    if (!dataISO) return null;
+    if (horaVal === undefined || horaVal === null || String(horaVal).trim() === '') return dataISO;
+    const dt = new Date(dataISO);
+    const year = dt.getUTCFullYear(), month = dt.getUTCMonth(), day = dt.getUTCDate();
+    let hours = 0, minutes = 0;
+    if (typeof horaVal === 'number') {
+      const totalSeconds = Math.round(horaVal * 86400);
+      hours = Math.floor(totalSeconds / 3600) % 24;
+      minutes = Math.floor((totalSeconds % 3600) / 60);
+    } else if (typeof horaVal === 'string') {
+      const v = horaVal.trim();
+      if (v.includes('T') || v.includes('-') || v.includes('/')) {
+        const timeDate = new Date(v);
+        if (!isNaN(timeDate.getTime())) {
+          hours = v.toUpperCase().includes('Z') ? timeDate.getUTCHours() : timeDate.getHours();
+          minutes = v.toUpperCase().includes('Z') ? timeDate.getUTCMinutes() : timeDate.getMinutes();
+        }
+      } else {
+        const parts = v.split(':');
+        if (parts.length >= 2) {
+          hours = parseInt(parts[0], 10) || 0;
+          minutes = parseInt(parts[1], 10) || 0;
+        }
+      }
+    }
+    return new Date(year, month, day, hours, minutes, 0, 0).toISOString();
+  };
+
+  dataArray.forEach((row, index) => {
+    const getVal = (keys) => {
+      const normalize = (k) => k
+        ? String(k).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim()
+        : '';
+      for (const k of keys) {
+        let val = row[k];
+        if (val === undefined) {
+          const target = normalize(k);
+          const foundKey = Object.keys(row).find(rk => normalize(rk) === target);
+          if (foundKey) val = row[foundKey];
+        }
+        if (val !== undefined && val !== null && String(val).trim() !== '') return val;
+      }
+      return undefined;
+    };
+
+    const nome = getVal(['TAREFA', 'tarefa', 'Nome', 'nome', 'Etapa', 'etapa']);
+    const codigo = getVal(['CODIGO', 'codigo', 'CÓDIGO', 'código']);
+    if (!nome) return;
+
+    const normalizeVal = (str) => str ? String(str).trim().replace(/\s+/g, ' ').toLowerCase() : '';
+    const uniqueKey = `${codigo ? 'code:' + normalizeVal(codigo) : ''}|name:${normalizeVal(nome)}`;
+    if (chavesProcessadas.has(uniqueKey)) return;
+    chavesProcessadas.add(uniqueKey);
+
+    let dataPrevista = formatarData(getVal(['INÍCIO', 'início', 'inicio', 'Data Prevista']));
+    dataPrevista = combinarDataHora(dataPrevista, getVal(['HORA INICIO', 'Hora Inicio']));
+    let dataReal = formatarData(getVal(['TÉRMINO', 'término', 'termino', 'Data Real']));
+    dataReal = combinarDataHora(dataReal, getVal(['HORA TÉRMINO', 'Hora Término']));
+
+    let status = 'pendente';
+    const now = new Date();
+    const rawStatus = getVal(['STATUS', 'status', 'SITUAÇÃO', 'situacao']);
+    const statusStr = rawStatus ? String(rawStatus).toLowerCase() : '';
+    if (dataReal || statusStr.includes('conclu')) {
+      status = (dataReal && dataPrevista && new Date(dataReal) > new Date(dataPrevista)) ? 'concluido_atraso' : 'concluido';
+    } else if (dataPrevista && new Date(dataPrevista) < now) {
+      status = 'atrasado';
+    } else if (statusStr.includes('andamento')) {
+      status = 'em_andamento';
+    }
+    if (statusStr.includes('atras')) status = 'atrasado';
+
+    etapasValidadas.push({
+      ...row, nome, codigo, dataPrevista, dataReal, status
+    });
+  });
+
+  return etapasValidadas;
 }

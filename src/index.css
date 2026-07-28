@@ -301,6 +301,47 @@ select {
   padding-right: 32px;
 }
 
+/* Filtro principal de período nas páginas de acompanhamento */
+.period-filter-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px 5px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+}
+
+.period-filter-label {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.period-filter {
+  min-width: 154px;
+  background-color: var(--bg);
+  border-color: rgba(53, 218, 179, 0.55);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.period-filter:hover {
+  border-color: var(--accent);
+}
+
+.period-filter:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.period-filter option {
+  background: var(--surface);
+  color: var(--text);
+}
+
 /* Link */
 a {
   color: var(--accent);
