@@ -12,7 +12,8 @@ import { getDatabase, ref, onValue } from "firebase/database";
 // Componente de Carrossel para os cards dentro de cada slot
 const TaskCarousel = ({ tasks, setEtapaSelecionada }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
-  const now = new Date();
+  const [now, setNow] = useState(new Date());
+  const cardRef = useRef(null);
 
   useEffect(() => {
     if (tasks.length <= 1) return;
@@ -24,12 +25,57 @@ const TaskCarousel = ({ tasks, setEtapaSelecionada }) => {
     return () => clearInterval(interval);
   }, [tasks.length]);
 
+  // Atualiza o horário atual a cada 30 segundos para reavaliar atrasos
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNow(new Date());
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
   if (tasks.length === 0) return null;
 
   const etapa = tasks[currentIndex];
   const status = etapa.status ? etapa.status.toLowerCase() : '';
-  const isLate = etapa.dataPrevista && new Date(etapa.dataPrevista) < now && status !== 'concluido' && status !== 'concluido_atraso';
-  
+  const isLate = (etapa.dataPrevista && new Date(etapa.dataPrevista) < now && status !== 'concluido' && status !== 'concluido_atraso') || status === 'atrasado';
+
+  // Blink effect - alterna fundo do card, outline e cor do texto
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    if (!isLate) {
+      el.style.backgroundColor = '';
+      el.style.outline = '';
+      el.style.color = '';
+      el.style.fontWeight = '';
+      return;
+    }
+    let toggle = false;
+    const id = setInterval(() => {
+      toggle = !toggle;
+      if (toggle) {
+        el.style.backgroundColor = '#fef2f2';
+        el.style.outline = '3px solid #ef4444';
+        el.style.color = '#b91c1c';
+        el.style.fontWeight = '700';
+      } else {
+        el.style.backgroundColor = '#ffffff';
+        el.style.outline = '3px solid #fca5a5';
+        el.style.color = '#7f1d1d';
+        el.style.fontWeight = '600';
+      }
+    }, 500);
+    return () => {
+      clearInterval(id);
+      if (el) {
+        el.style.backgroundColor = '';
+        el.style.outline = '';
+        el.style.color = '';
+        el.style.fontWeight = '';
+      }
+    };
+  }, [isLate]);
+
   let borderColor = 'bg-slate-300';
   if (status === 'concluido' || status === 'concluído' || status.includes('concluido')) {
     borderColor = status.includes('atraso') ? 'bg-orange-500' : 'bg-green-500';
@@ -44,9 +90,10 @@ const TaskCarousel = ({ tasks, setEtapaSelecionada }) => {
   return (
     <div className="relative w-full h-full flex items-center justify-center p-2 overflow-hidden">
       <button 
+        ref={cardRef}
         key={etapa.id}
         onClick={(e) => { e.stopPropagation(); setEtapaSelecionada(etapa); }}
-        className={`flex flex-col rounded-lg shadow-sm text-left hover:shadow-md transition-all relative overflow-hidden border border-slate-200 w-full max-w-[95%] group bg-white shrink-0 h-fit ${status === 'atrasado' || isLate ? 'animate-blink-red !border-red-300' : 'hover:border-blue-300'}`}
+        className="flex flex-col rounded-lg shadow-sm text-left hover:shadow-md relative overflow-hidden border border-slate-200 w-full max-w-[95%] group shrink-0 h-fit bg-white"
       >
         <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${borderColor}`}></div>
         
@@ -776,8 +823,13 @@ export default function Fluxograma() {
       )}
 
       <style>{`
-        @keyframes blink-red { 0%, 100% { background-color: #ffffff; } 50% { background-color: #fee2e2; } }
-        .animate-blink-red { animation: blink-red 2s infinite; }
+        @keyframes blink-bg {
+          0%, 100% { background-color: #ffffff; border-color: #fca5a5; }
+          50% { background-color: #fef2f2; border-color: #ef4444; }
+        }
+        .animate-blink {
+          animation: blink-bg 1s ease-in-out infinite !important;
+        }
         
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fadeIn { animation: fadeIn 0.3s ease-out forwards; }
