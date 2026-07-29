@@ -4,7 +4,7 @@ import { getFirestore, doc, onSnapshot, collection, getDocs, writeBatch, updateD
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { getResponsaveis, criarEtapa, atualizarEtapa, deletarEtapa, getStatusColor, getStatusLabel } from '../services/database';
-import { Plus, X, Filter, Settings, CheckCircle, RotateCcw, Search } from 'lucide-react';
+import { Plus, X, Filter, Settings, CheckCircle, RotateCcw, Search, Pencil, Trash2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { checkPermission } from "./permissionUtils";
 
@@ -404,14 +404,27 @@ export default function Etapas() {
     setShowModal(true);
   };
 
+  const podeGerenciar = useMemo(() => {
+    const perfil = userProfile?.perfilAcesso || authUser?.perfilAcesso || '';
+    return ['Gerente', 'Admin', 'Master'].includes(perfil);
+  }, [userProfile, authUser]);
+
   const handleDeletar = async (etapa) => {
-    if (window.confirm('Tem certeza que deseja excluir esta etapa?')) {
+    if (!window.confirm('Tem certeza que deseja excluir esta etapa?')) return;
+    
+    if (etapa._fonte === 'manual' && etapa._idManual) {
+      // Etapa manual - remove do Realtime Database
+      const rtdb = getDatabase();
+      const manualRef = ref(rtdb, `tenants/${empresaAtual.id}/etapasManuais/${etapa._idManual}`);
+      await remove(manualRef);
+    } else {
+      // Etapa da planilha - remove via serviço
       const empId = etapa.empresaId;
       const perId = etapa.periodoId;
       const id = etapa.id || etapa.originalId;
       
       if (!id) {
-        alert("Esta etapa ainda não foi salva no banco de dados e não pode ser excluída por aqui. Exclua na planilha e sincronize.");
+        alert("Esta etapa veio da planilha e não pode ser excluída por aqui. Exclua na planilha e sincronize.");
         return;
       }
 
@@ -595,23 +608,43 @@ export default function Etapas() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-center">
-                    {etapa.status?.includes('concluido') ? (
-                      <button
-                        onClick={(e) => handleConcluirEtapa(e, etapa)}
-                        className="p-2 text-[var(--warning)] hover:bg-[var(--warning-soft)] rounded-full transition-colors"
-                        title="Reabrir Etapa"
-                      >
-                        <RotateCcw className="w-4 h-4" />
-                      </button>
-                    ) : (
-                      <button
-                        onClick={(e) => handleConcluirEtapa(e, etapa)}
-                        className="p-2 text-[var(--success)] hover:bg-[var(--success-soft)] rounded-full transition-colors"
-                        title="Concluir Etapa"
-                      >
-                        <CheckCircle className="w-5 h-5" />
-                      </button>
-                    )}
+                    <div className="flex items-center justify-center gap-1">
+                      {etapa.status?.includes('concluido') ? (
+                        <button
+                          onClick={(e) => handleConcluirEtapa(e, etapa)}
+                          className="p-2 text-[var(--warning)] hover:bg-[var(--warning-soft)] rounded-full transition-colors"
+                          title="Reabrir Etapa"
+                        >
+                          <RotateCcw className="w-4 h-4" />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={(e) => handleConcluirEtapa(e, etapa)}
+                          className="p-2 text-[var(--success)] hover:bg-[var(--success-soft)] rounded-full transition-colors"
+                          title="Concluir Etapa"
+                        >
+                          <CheckCircle className="w-5 h-5" />
+                        </button>
+                      )}
+                      {etapa._fonte === 'manual' && podeGerenciar && (
+                        <>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleEditar(etapa); }}
+                            className="p-2 text-[var(--info)] hover:bg-[var(--info-soft)] rounded-full transition-colors"
+                            title="Editar Etapa"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDeletar(etapa); }}
+                            className="p-2 text-[var(--danger)] hover:bg-[var(--danger-soft)] rounded-full transition-colors"
+                            title="Excluir Etapa"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </td>
                   {viewAllCompanies && <td className="table-cell">{etapa.empresaNome}</td>}
                   <td className="table-cell">{etapa.area || '-'}</td>
