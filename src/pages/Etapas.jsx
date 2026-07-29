@@ -295,8 +295,8 @@ export default function Etapas() {
     let realPeriodId = periodoSelecionado.realId;
 
     if (!realPeriodId) {
-      const db = getFirestore();
-      const periodsSnapshot = await getDocs(collection(db, 'tenants', empresaAtual.id, 'periodos'));
+      const fsDb = getFirestore();
+      const periodsSnapshot = await getDocs(collection(fsDb, 'tenants', empresaAtual.id, 'periodos'));
       const periodsData = periodsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       const found = periodsData.find(p => parseInt(p.mes) === parseInt(periodoSelecionado.mes) && parseInt(p.ano) === parseInt(periodoSelecionado.ano));
       if (found) realPeriodId = found.id;
@@ -307,12 +307,51 @@ export default function Etapas() {
       return;
     }
 
-    if (etapaEditando && (etapaEditando.id || etapaEditando.originalId)) {
-      await atualizarEtapa(empresaAtual.id, realPeriodId, etapaEditando.id || etapaEditando.originalId, form);
-    } else {
-      // Se não tem ID (veio da planilha e não está no banco), cria uma nova
-      const dados = { ...form };
-      await criarEtapa(empresaAtual.id, realPeriodId, dados);
+    try {
+      // Gera código automático sequencial
+      const nextCode = String(etapas.length + 1).padStart(3, '0');
+
+      const dados = {
+        nome: form.nome || `Etapa ${nextCode}`,
+        codigo: form.codigo || nextCode,
+        descricao: form.descricao || '',
+        area: form.area || '',
+        responsavel: form.responsavel || '',
+        dataPrevista: form.dataPrevista || new Date().toISOString(),
+        dataReal: form.dataReal || '',
+        ordem: form.ordem || etapas.length + 1,
+        observacoes: form.observacoes || ''
+      };
+
+      if (etapaEditando && (etapaEditando.id || etapaEditando.originalId)) {
+        await atualizarEtapa(empresaAtual.id, realPeriodId, etapaEditando.id || etapaEditando.originalId, dados);
+      } else {
+        // Cria no Firestore (permanente)
+        await criarEtapa(empresaAtual.id, realPeriodId, dados);
+        
+        // Também insere no tabelaGoogle (Realtime Database) para aparecer na listagem
+        const rtdb = getDatabase();
+        const tabelaRef = ref(rtdb, `tenants/${empresaAtual.id}/tabelaGoogle`);
+        const snapshot = await get(tabelaRef);
+        const currentData = snapshot.val() || [];
+        const newRow = {
+          'CODIGO': dados.codigo,
+          'TAREFA': dados.nome,
+          'Descrição': dados.descricao,
+          'ÁREA': dados.area,
+          'ATRIBUÍDO PARA': dados.responsavel,
+          'INÍCIO': dados.dataPrevista ? new Date(dados.dataPrevista).toLocaleDateString('pt-BR') : '',
+          'TÉRMINO': '',
+          'STATUS': 'Pendente',
+          'D+': dados.ordem,
+          'Observações': dados.observacoes
+        };
+        await set(tabelaRef, [...currentData, newRow]);
+      }
+    } catch (error) {
+      console.error("Erro ao salvar etapa:", error);
+      alert("Erro ao salvar etapa. Tente novamente.");
+      return;
     }
     
     setShowModal(false);
@@ -594,10 +633,9 @@ export default function Etapas() {
             <form onSubmit={handleSubmit} className="modal-body">
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
-                  <label className="form-label">Nome *</label>
+                  <label className="form-label">Nome</label>
                   <input
                     type="text"
-                    required
                     value={form.nome}
                     onChange={(e) => setForm({ ...form, nome: e.target.value })}
                     className="form-input"
@@ -643,9 +681,10 @@ export default function Etapas() {
                 </div>
                 
                 <div>
-                  <label className="form-label">Data Prevista</label>
+                  <label className="form-label">Data Prevista *</label>
                   <input
                     type="datetime-local"
+                    required
                     value={formatDateForInput(form.dataPrevista)}
                     onChange={(e) => setForm({ ...form, dataPrevista: e.target.value ? new Date(e.target.value).toISOString() : '' })}
                     className="form-input"

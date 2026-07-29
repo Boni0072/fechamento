@@ -85,22 +85,42 @@ export default function Sidebar() {
 
       {/* 3. Menu Principal */}
       <nav className="flex-1 space-y-2 px-2">
-        {paginas.map((pagina) => {
-          const Icon = pagina.icon;
-          const isActive = location.pathname === pagina.path;
-          return (
-            <NavLink
-              key={pagina.path}
-              to={pagina.path}
-              className={`${linkStyle} ${isActive ? activeLinkStyle : inactiveLinkStyle} group ${isCollapsed ? 'justify-center' : ''}`}
-            >
-              <div className="w-10 flex-shrink-0 flex items-center justify-center">
-                <Icon className={`w-5 h-5 transition-colors duration-200 ${isActive ? 'text-white' : 'text-[var(--text-muted)]'}`} />
-              </div>
-              <span className={`transition-colors duration-200 ${isActive ? 'text-white' : 'text-[var(--text)]'} ${isCollapsed ? 'hidden' : 'inline-block'}`}>{pagina.label}</span>
-            </NavLink>
-          );
-        })}
+        {paginas
+          .filter((pagina) => {
+            // Sempre mostra Dashboard (rota "/")
+            if (pagina.path === '/') return true;
+            
+            // Se não tem usuário, não mostra nada
+            if (!user) return false;
+            
+            // Master e Admin tem acesso a todas as páginas
+            if (user.perfilAcesso === 'Master' || user.perfilAcesso === 'Admin') return true;
+            
+            // Verifica se a página está na lista de páginas permitidas do usuário
+            const paginasUser = Array.isArray(user.paginasAcesso) 
+              ? user.paginasAcesso 
+              : Object.values(user.paginasAcesso || {});
+            
+            // Extrai o nome da página a partir do path (ex: "/fluxograma" -> "fluxograma")
+            const pageName = pagina.path.replace('/', '');
+            return paginasUser.some(p => String(p).toLowerCase() === pageName.toLowerCase());
+          })
+          .map((pagina) => {
+            const Icon = pagina.icon;
+            const isActive = location.pathname === pagina.path;
+            return (
+              <NavLink
+                key={pagina.path}
+                to={pagina.path}
+                className={`${linkStyle} ${isActive ? activeLinkStyle : inactiveLinkStyle} group ${isCollapsed ? 'justify-center' : ''}`}
+              >
+                <div className="w-10 flex-shrink-0 flex items-center justify-center">
+                  <Icon className={`w-5 h-5 transition-colors duration-200 ${isActive ? 'text-white' : 'text-[var(--text-muted)]'}`} />
+                </div>
+                <span className={`transition-colors duration-200 ${isActive ? 'text-white' : 'text-[var(--text)]'} ${isCollapsed ? 'hidden' : 'inline-block'}`}>{pagina.label}</span>
+              </NavLink>
+            );
+          })}
       </nav>
 
       {/* 4. Rodapé */}

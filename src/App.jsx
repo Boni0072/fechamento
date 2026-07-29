@@ -74,11 +74,10 @@ const RotaProtegida = ({ children, requiredPage }) => {
     return <Navigate to="/login" replace />;
   }
 
-  // Bloqueio desativado para liberar acesso geral
-  // if (requiredPage && !autorizado) {
-  //   console.warn(`Acesso negado: Usuário não autorizado para a página ${requiredPage}. Redirecionando para o dashboard.`);
-  //   return <Navigate to="/" replace />;
-  // }
+  if (requiredPage && !autorizado) {
+    console.warn(`Acesso negado: Usuário não autorizado para a página ${requiredPage}. Redirecionando para o dashboard.`);
+    return <Navigate to="/" replace />;
+  }
 
   // Ao usar o ID da empresa como 'key', o React forçará a recriação completa
   // dos componentes filhos quando a empresa mudar, evitando que dados da empresa
