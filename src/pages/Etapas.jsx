@@ -319,8 +319,17 @@ export default function Etapas() {
     }
 
     try {
-      // Gera código automático sequencial
-      const nextCode = String(etapas.length + 1).padStart(3, '0');
+      // Gera código automático: ATV + MM(2) + AA(2) + SEQ(3)
+      // Usa a dataPrevista do formulário para extrair mês/ano
+      const dataBase = form.dataPrevista ? new Date(form.dataPrevista) : new Date();
+      const mes = String(dataBase.getMonth() + 1).padStart(2, '0');
+      const ano = String(dataBase.getFullYear()).slice(-2);
+      const prefixo = `ATV${mes}${ano}`;
+      
+      // Conta quantas etapas manuais já existem com o mesmo prefixo do mês/ano
+      const countEtapasMes = etapas.filter(e => e.codigo && e.codigo.startsWith(prefixo)).length;
+      const seq = String(countEtapasMes + 1).padStart(3, '0');
+      const nextCode = prefixo + seq;
 
       const dados = {
         nome: form.nome || `Etapa ${nextCode}`,
@@ -755,26 +764,6 @@ export default function Etapas() {
                   />
                 </div>
                 
-                <div>
-                  <label className="form-label">Código</label>
-                  <input
-                    type="text"
-                    value={form.codigo}
-                    onChange={(e) => setForm({ ...form, codigo: e.target.value })}
-                    className="form-input"
-                  />
-                </div>
-
-                <div>
-                  <label className="form-label">Ordem (D+)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={form.ordem}
-                    onChange={(e) => setForm({ ...form, ordem: parseInt(e.target.value) })}
-                    className="form-input"
-                  />
-                </div>
                 
                 <div className="col-span-2">
                   <label className="form-label">Observações</label>
