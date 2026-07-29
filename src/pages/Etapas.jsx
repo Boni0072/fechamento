@@ -8,7 +8,7 @@ import { Plus, X, Filter, Settings, CheckCircle, RotateCcw, Search } from 'lucid
 import * as XLSX from 'xlsx';
 import { checkPermission } from "./permissionUtils";
 
-import { getDatabase, ref, onValue, get, set } from "firebase/database";
+import { getDatabase, ref, onValue, get, set, push, update, remove, child } from "firebase/database";
 export default function Etapas() {
   const navigate = useNavigate();
   const { empresaAtual, empresas, selecionarEmpresa } = useAuth();
@@ -110,16 +110,38 @@ export default function Etapas() {
 
     const db = getDatabase();
     const googleTableRef = ref(db, `tenants/${empresaAtual.id}/tabelaGoogle`);
+    const manuaisRef = ref(db, `tenants/${empresaAtual.id}/etapasManuais`);
 
-    const unsubscribe = onValue(googleTableRef, (snapshot) => {
-      let data = snapshot.val();
-      if (data) {
-        // Process the data from Realtime Database and update state
-        console.log("Data from Realtime Database:", data);
-        // Add original index to each item for direct updates
-        const allEtapas = processRealtimeData(data).map((e, index) => ({
-          ...e, _originalIndex: index
-        }));
+    const handleData = () => {
+      // Lê ambos os nós e mescla
+      Promise.all([
+        get(googleTableRef),
+        get(manuaisRef)
+      ]).then(([googleSnap, manuaisSnap]) => {
+        const googleData = googleSnap.val();
+        const manuaisData = manuaisSnap.val();
+
+        let googleEtapas = [];
+        if (googleData) {
+          googleEtapas = processRealtimeData(googleData).map((e, index) => ({
+            ...e,
+            _originalIndex: index,
+            _fonte: 'planilha'
+          }));
+        }
+
+        let manuaisEtapas = [];
+        if (manuaisData) {
+          manuaisEtapas = processRealtimeData(Object.values(manuaisData)).map((e, index) => ({
+            ...e,
+            _originalIndex: googleEtapas.length + index,
+            _idManual: Object.keys(manuaisData)[index],
+            _fonte: 'manual'
+          }));
+        }
+
+        // Mescla: primeiro as da planilha, depois as manuais
+        const allEtapas = [...googleEtapas, ...manuaisEtapas];
         setEtapas(allEtapas);
 
         const periodosPorData = new Map();
@@ -136,24 +158,28 @@ export default function Etapas() {
         setPeriodos(periodosDisponiveis);
         setPeriodoSelecionado(prev => periodosDisponiveis.find(p => p.id === prev?.id) || periodosDisponiveis[0]);
 
-        // Deriva áreas e responsáveis para os filtros a partir dos dados processados
         const uniqueAreas = [...new Set(allEtapas.map(e => e.area).filter(Boolean))].sort();
         setAreas(uniqueAreas.map((a, i) => ({ id: i, nome: a })));
         
         const uniqueResps = [...new Set(allEtapas.map(e => e.responsavel).filter(Boolean))].sort();
         setResponsaveis(uniqueResps.map((r, i) => ({ id: i, nome: r })));
-      } else {
-        setEtapas([]);
-        setPeriodos([]);
-        setPeriodoSelecionado(null);
-        setAreas([]);
-        setResponsaveis([]);
-      }
-      setLoadingData(false);
-    });
+        
+        setLoadingData(false);
+      }).catch(err => {
+        console.error("Erro ao carregar dados:", err);
+        setLoadingData(false);
+      });
+    };
+
+    handleData();
+
+    // Escuta mudanças em ambos os nós
+    const unsubGoogle = onValue(googleTableRef, handleData);
+    const unsubManuais = onValue(manuaisRef, handleData);
 
     return () => {
-      unsubscribe();
+      unsubGoogle();
+      unsubManuais();
     };
   }, [empresaAtual]);
 
@@ -292,21 +318,6 @@ export default function Etapas() {
       return;
     }
 
-    let realPeriodId = periodoSelecionado.realId;
-
-    if (!realPeriodId) {
-      const fsDb = getFirestore();
-      const periodsSnapshot = await getDocs(collection(fsDb, 'tenants', empresaAtual.id, 'periodos'));
-      const periodsData = periodsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      const found = periodsData.find(p => parseInt(p.mes) === parseInt(periodoSelecionado.mes) && parseInt(p.ano) === parseInt(periodoSelecionado.ano));
-      if (found) realPeriodId = found.id;
-    }
-
-    if (!realPeriodId) {
-      alert("Período não encontrado.");
-      return;
-    }
-
     try {
       // Gera código automático sequencial
       const nextCode = String(etapas.length + 1).padStart(3, '0');
@@ -323,30 +334,38 @@ export default function Etapas() {
         observacoes: form.observacoes || ''
       };
 
-      if (etapaEditando && (etapaEditando.id || etapaEditando.originalId)) {
-        await atualizarEtapa(empresaAtual.id, realPeriodId, etapaEditando.id || etapaEditando.originalId, dados);
+      const rtdb = getDatabase();
+      
+      // Salva no nó separado de etapas manuais (não é sobrescrito pela sincronização da planilha)
+      const manuaisRef = ref(rtdb, `tenants/${empresaAtual.id}/etapasManuais`);
+      
+      if (etapaEditando && etapaEditando._idManual) {
+        // Atualiza etapa manual existente
+        await update(child(manuaisRef, etapaEditando._idManual), {
+          ...dados,
+          atualizadoEm: Date.now()
+        });
+      } else if (etapaEditando && (etapaEditando.id || etapaEditando.originalId)) {
+        // Etapa da planilha - atualiza via serviço
+        let realPeriodId = periodoSelecionado.realId;
+        if (!realPeriodId) {
+          const fsDb = getFirestore();
+          const periodsSnapshot = await getDocs(collection(fsDb, 'tenants', empresaAtual.id, 'periodos'));
+          const periodsData = periodsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+          const found = periodsData.find(p => parseInt(p.mes) === parseInt(periodoSelecionado.mes) && parseInt(p.ano) === parseInt(periodoSelecionado.ano));
+          if (found) realPeriodId = found.id;
+        }
+        if (realPeriodId) {
+          await atualizarEtapa(empresaAtual.id, realPeriodId, etapaEditando.id || etapaEditando.originalId, dados);
+        }
       } else {
-        // Cria no Firestore (permanente)
-        await criarEtapa(empresaAtual.id, realPeriodId, dados);
-        
-        // Também insere no tabelaGoogle (Realtime Database) para aparecer na listagem
-        const rtdb = getDatabase();
-        const tabelaRef = ref(rtdb, `tenants/${empresaAtual.id}/tabelaGoogle`);
-        const snapshot = await get(tabelaRef);
-        const currentData = snapshot.val() || [];
-        const newRow = {
-          'CODIGO': dados.codigo,
-          'TAREFA': dados.nome,
-          'Descrição': dados.descricao,
-          'ÁREA': dados.area,
-          'ATRIBUÍDO PARA': dados.responsavel,
-          'INÍCIO': dados.dataPrevista ? new Date(dados.dataPrevista).toLocaleDateString('pt-BR') : '',
-          'TÉRMINO': '',
-          'STATUS': 'Pendente',
-          'D+': dados.ordem,
-          'Observações': dados.observacoes
-        };
-        await set(tabelaRef, [...currentData, newRow]);
+        // Cria nova etapa manual no Realtime Database (nó separado da planilha)
+        const novaRef = push(manuaisRef);
+        await set(novaRef, {
+          ...dados,
+          criadoEm: Date.now(),
+          status: 'pendente'
+        });
       }
     } catch (error) {
       console.error("Erro ao salvar etapa:", error);
