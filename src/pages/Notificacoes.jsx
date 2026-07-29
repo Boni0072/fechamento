@@ -395,8 +395,8 @@ export default function Notificacoes() {
       corpoEmail += `🔴 ETAPAS ATRASADAS (${atrasadas.length}):\n`;
       atrasadas.forEach(e => {
         const data = e.dataPrevista ? format(new Date(e.dataPrevista), 'dd/MM/yyyy') : 'Sem data';
-        const codigo = e.codigo ? `${e.codigo} - ` : '';
-        corpoEmail += `- ${codigo}${e.nome} (Venceu em: ${data})\n`;
+        const codigoStr = e.codigo ? `Codigo da Atividade - ${e.codigo}, ` : '';
+        corpoEmail += `${codigoStr}Atividade - ${e.nome} (Venceu em: ${data})\n`;
       });
       corpoEmail += '\n';
     }
@@ -405,13 +405,13 @@ export default function Notificacoes() {
       corpoEmail += `⚠️ PRÓXIMAS DO PRAZO (${proximas.length}):\n`;
       proximas.forEach(e => {
         const data = e.dataPrevista ? format(new Date(e.dataPrevista), 'dd/MM/yyyy') : 'Sem data';
-        const codigo = e.codigo ? `${e.codigo} - ` : '';
-        corpoEmail += `- ${codigo}${e.nome} (Vence em: ${data})\n`;
+        const codigoStr = e.codigo ? `Codigo da Atividade - ${e.codigo}, ` : '';
+        corpoEmail += `${codigoStr}Atividade - ${e.nome} (Vence em: ${data})\n`;
       });
       corpoEmail += '\n';
     }
 
-    corpoEmail += "\nPor favor, responda o e-mail com o codido da atividade no assunto do e-mail assim que finalizado.\n\nAtenciosamente,\nEquipe de Fechamento";
+    corpoEmail += "\nPor favor, responda o e-mail somente com o codido da atividade no assunto do e-mail assim que finalizado e com uma evidência da atividade finalizada se possível.\n\nAtenciosamente,\nEquipe de Fechamento";
 
     const subject = encodeURIComponent(`Alerta de Fechamento - ${total} pendências`);
     const body = encodeURIComponent(corpoEmail);
