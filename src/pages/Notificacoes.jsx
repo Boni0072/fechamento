@@ -24,7 +24,7 @@ export default function Notificacoes() {
   const [showProximas, setShowProximas] = useState(false);
   const [showAtrasadas, setShowAtrasadas] = useState(false);
   const [config, setConfig] = useState({
-    emailAlerts: false,
+    emailAlerts: true,
     delayAlerts: true,
     daysNotice: 3
   });
@@ -597,14 +597,14 @@ export default function Notificacoes() {
                   <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Enviar emails quando etapas estiverem próximas do prazo</p>
                 </div>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer">
+                <label className="relative inline-flex items-center cursor-pointer">
                 <input 
                   type="checkbox" 
                   className="sr-only peer"
                   checked={config.emailAlerts}
                   onChange={(e) => handleUpdateConfig('emailAlerts', e.target.checked)}
                 />
-                <div className="w-11 h-6 bg-slate-200 peer-focus:ring-4 peer-focus:ring-[var(--primary-soft)] rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[var(--primary)]"></div>
+                <div className="w-11 h-6 bg-red-400 peer-focus:ring-4 peer-focus:ring-red-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-500"></div>
               </label>
             </div>
 
@@ -616,14 +616,14 @@ export default function Notificacoes() {
                   <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Notificar quando etapas ficarem atrasadas</p>
                 </div>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer">
+                <label className="relative inline-flex items-center cursor-pointer">
                 <input 
                   type="checkbox" 
                   className="sr-only peer"
                   checked={config.delayAlerts}
                   onChange={(e) => handleUpdateConfig('delayAlerts', e.target.checked)}
                 />
-                <div className="w-11 h-6 bg-slate-200 peer-focus:ring-4 peer-focus:ring-[var(--primary-soft)] rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[var(--primary)]"></div>
+                <div className="w-11 h-6 bg-red-400 peer-focus:ring-4 peer-focus:ring-red-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-500"></div>
               </label>
             </div>
 
