@@ -395,7 +395,8 @@ export default function Notificacoes() {
       corpoEmail += `🔴 ETAPAS ATRASADAS (${atrasadas.length}):\n`;
       atrasadas.forEach(e => {
         const data = e.dataPrevista ? format(new Date(e.dataPrevista), 'dd/MM/yyyy') : 'Sem data';
-        corpoEmail += `- ${e.nome} (Venceu em: ${data})\n`;
+        const codigo = e.codigo ? `${e.codigo} - ` : '';
+        corpoEmail += `- ${codigo}${e.nome} (Venceu em: ${data})\n`;
       });
       corpoEmail += '\n';
     }
@@ -404,7 +405,8 @@ export default function Notificacoes() {
       corpoEmail += `⚠️ PRÓXIMAS DO PRAZO (${proximas.length}):\n`;
       proximas.forEach(e => {
         const data = e.dataPrevista ? format(new Date(e.dataPrevista), 'dd/MM/yyyy') : 'Sem data';
-        corpoEmail += `- ${e.nome} (Vence em: ${data})\n`;
+        const codigo = e.codigo ? `${e.codigo} - ` : '';
+        corpoEmail += `- ${codigo}${e.nome} (Vence em: ${data})\n`;
       });
       corpoEmail += '\n';
     }
