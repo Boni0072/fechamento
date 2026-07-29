@@ -411,7 +411,7 @@ export default function Notificacoes() {
       corpoEmail += '\n';
     }
 
-    corpoEmail += "\nPor favor, Quando finalizar a atividade, enviar um e-mail para Fechamento.contabil com o codigo da atividade no assunto do e-mail e com uma evidência da atividade finalizada se possível.\n\nAtenciosamente,\nEquipe de Fechamento - Contabilidade";
+    corpoEmail += "\nPor favor, quando finalizar a atividade, enviar um e-mail para Fechamento.contabil@redeoba.com.br com o codigo da atividade no assunto do e-mail e com uma evidência da atividade finalizada se possível.\n\nAtenciosamente,\nEquipe de Fechamento - Contabilidade";
 
     const subject = encodeURIComponent(`Alerta de Fechamento - ${total} pendências`);
     const body = encodeURIComponent(corpoEmail);
