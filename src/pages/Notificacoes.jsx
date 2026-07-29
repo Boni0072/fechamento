@@ -411,7 +411,7 @@ export default function Notificacoes() {
       corpoEmail += '\n';
     }
 
-    corpoEmail += "\nPor favor, atualize o status no sistema assim que possível.\n\nAtenciosamente,\nEquipe de Fechamento";
+    corpoEmail += "\nPor favor, responda o e-mail com o codido da atividade no assunto do e-mail assim que finalizado.\n\nAtenciosamente,\nEquipe de Fechamento";
 
     const subject = encodeURIComponent(`Alerta de Fechamento - ${total} pendências`);
     const body = encodeURIComponent(corpoEmail);
@@ -829,8 +829,8 @@ function processData(data) {
       return undefined;
     };
 
-    const nome = getVal(['TAREFA', 'tarefa', 'Nome', 'nome', 'Etapa', 'etapa']);
-    const codigo = getVal(['CODIGO', 'codigo', 'CÓDIGO', 'código']);
+    const nome = getVal(['TAREFA', 'tarefa', 'Nome', 'nome', 'Etapa', 'etapa', 'Etapas', 'etapas', 'Tarefas', 'tarefas', 'Atividade', 'atividade', 'Descrição', 'descricao', 'Item', 'item']);
+    const codigo = getVal(['CODIGO', 'codigo', 'CÓDIGO', 'código', 'Codigo', 'Código', 'Cod', 'COD', 'ID', 'Id', 'Code']);
     if (!nome) return;
 
     const normalizeVal = (str) => str ? String(str).trim().replace(/\s+/g, ' ').toLowerCase() : '';
@@ -838,26 +838,42 @@ function processData(data) {
     if (chavesProcessadas.has(uniqueKey)) return;
     chavesProcessadas.add(uniqueKey);
 
-    let dataPrevista = formatarData(getVal(['INÍCIO', 'início', 'inicio', 'Data Prevista']));
-    dataPrevista = combinarDataHora(dataPrevista, getVal(['HORA INICIO', 'Hora Inicio']));
-    let dataReal = formatarData(getVal(['TÉRMINO', 'término', 'termino', 'Data Real']));
-    dataReal = combinarDataHora(dataReal, getVal(['HORA TÉRMINO', 'Hora Término']));
+    let dataPrevista = formatarData(getVal(['INÍCIO', 'início', 'inicio', 'Data Prevista', 'dataPrevista', 'Data de Início', 'Data de Inicio', 'Previsão', 'Previsao', 'Data', 'Date', 'Start', 'Planejado', 'Data Planejada']));
+    dataPrevista = combinarDataHora(dataPrevista, getVal(['HORA INICIO', 'Hora Inicio', 'hora inicio', 'Hora Início']));
+    let dataReal = formatarData(getVal(['TÉRMINO', 'término', 'termino', 'Data Real', 'dataReal', 'Data Conclusão', 'Data Conclusao', 'Conclusão', 'Conclusao', 'Realizado', 'Executado', 'Fim', 'Data de Término', 'Data de Termino', 'Data Fim', 'Data Final', 'End']));
+    dataReal = combinarDataHora(dataReal, getVal(['HORA TÉRMINO', 'Hora Término', 'hora término', 'HORA TERMICA', 'Hora Termica']));
 
     let status = 'pendente';
     const now = new Date();
-    const rawStatus = getVal(['STATUS', 'status', 'SITUAÇÃO', 'situacao']);
+    const rawStatus = getVal(['STATUS', 'Status', 'status', 'SITUAÇÃO', 'Situação', 'situacao', 'Estado', 'estado']);
     const statusStr = rawStatus ? String(rawStatus).toLowerCase() : '';
-    if (dataReal || statusStr.includes('conclu')) {
-      status = (dataReal && dataPrevista && new Date(dataReal) > new Date(dataPrevista)) ? 'concluido_atraso' : 'concluido';
-    } else if (dataPrevista && new Date(dataPrevista) < now) {
-      status = 'atrasado';
-    } else if (statusStr.includes('andamento')) {
-      status = 'em_andamento';
+    const hasDataReal = dataReal !== null && dataReal !== undefined;
+    const isExplicitlyConcluido = statusStr.includes('conclu');
+
+    if (hasDataReal || isExplicitlyConcluido) {
+        status = 'concluido';
+        if (dataReal && dataPrevista && new Date(dataReal) > new Date(dataPrevista)) {
+            status = 'concluido_atraso';
+        }
+    } else {
+        if (dataPrevista && new Date(dataPrevista) < now) {
+            status = 'atrasado';
+        } else if (statusStr.includes('andamento')) {
+            status = 'em_andamento';
+        } else {
+            status = 'pendente';
+        }
+        if (statusStr.includes('atras')) {
+            status = 'atrasado';
+        }
     }
-    if (statusStr.includes('atras')) status = 'atrasado';
+
+    const responsavel = getVal(['ATRIBUÍDO PARA', 'atribuído para', 'atribuido para', 'Responsável', 'responsavel', 'Responsavel', 'Owner']) || '';
+    const area = getVal(['ÁREA', 'área', 'area', 'Área']) || '';
+    const executadoPor = getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPor', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || '';
 
     etapasValidadas.push({
-      ...row, nome, codigo, dataPrevista, dataReal, status
+      ...row, nome, codigo, dataPrevista, dataReal, status, responsavel, area, executadoPor
     });
   });
 
