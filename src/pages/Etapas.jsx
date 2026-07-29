@@ -609,22 +609,24 @@ export default function Etapas() {
                   </td>
                   <td className="px-4 py-3 text-center">
                     <div className="flex items-center justify-center gap-1">
-                      {etapa.status?.includes('concluido') ? (
-                        <button
-                          onClick={(e) => handleConcluirEtapa(e, etapa)}
-                          className="p-2 text-[var(--warning)] hover:bg-[var(--warning-soft)] rounded-full transition-colors"
-                          title="Reabrir Etapa"
-                        >
-                          <RotateCcw className="w-4 h-4" />
-                        </button>
-                      ) : (
-                        <button
-                          onClick={(e) => handleConcluirEtapa(e, etapa)}
-                          className="p-2 text-[var(--success)] hover:bg-[var(--success-soft)] rounded-full transition-colors"
-                          title="Concluir Etapa"
-                        >
-                          <CheckCircle className="w-5 h-5" />
-                        </button>
+                      {podeGerenciar && (
+                        etapa.status?.includes('concluido') ? (
+                          <button
+                            onClick={(e) => handleConcluirEtapa(e, etapa)}
+                            className="p-2 text-[var(--warning)] hover:bg-[var(--warning-soft)] rounded-full transition-colors"
+                            title="Reabrir Etapa"
+                          >
+                            <RotateCcw className="w-4 h-4" />
+                          </button>
+                        ) : (
+                          <button
+                            onClick={(e) => handleConcluirEtapa(e, etapa)}
+                            className="p-2 text-[var(--success)] hover:bg-[var(--success-soft)] rounded-full transition-colors"
+                            title="Concluir Etapa"
+                          >
+                            <CheckCircle className="w-5 h-5" />
+                          </button>
+                        )
                       )}
                       {etapa._fonte === 'manual' && podeGerenciar && (
                         <>
