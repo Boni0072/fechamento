@@ -47,6 +47,9 @@ export default function Empresas() {
   const [selectedSheet, setSelectedSheet] = useState('');
   const [currentWorkbook, setCurrentWorkbook] = useState(null);
   const [syncingId, setSyncingId] = useState(null);
+  const [additionalSpreadsheets, setAdditionalSpreadsheets] = useState([]);
+  const [additionalData, setAdditionalData] = useState({});
+  const [loadingAdditionalPreview, setLoadingAdditionalPreview] = useState({});
 
   // Estados para Configuração de Aparência
   const [showAppearanceModal, setShowAppearanceModal] = useState(false);
@@ -460,6 +463,43 @@ export default function Empresas() {
       // 2. Salva os DADOS no Realtime Database (para leitura rápida nas outras telas)
       const tabelaRef = ref(rtdb, `tenants/${configEmpresa.id}/tabelaGoogle`);
       await set(tabelaRef, processedData);
+
+      // 3. Salva planilhas adicionais no Firestore e RTDB
+      if (additionalSpreadsheets.length > 0) {
+        try {
+          await setDoc(doc(firestore, 'tenants', configEmpresa.id), {
+            additionalSpreadsheets: additionalSpreadsheets.map(s => ({
+              label: s.label,
+              spreadsheetId: s.spreadsheetId,
+              sheetName: s.sheetName || ''
+            }))
+          }, { merge: true });
+          
+          // Sincroniza cada planilha adicional
+          for (let i = 0; i < additionalSpreadsheets.length; i++) {
+            const s = additionalSpreadsheets[i];
+            if (!s.spreadsheetId) continue;
+            try {
+              const sheetParam = s.sheetName ? `&sheet=${encodeURIComponent(s.sheetName)}` : '&gid=0';
+              const url = `https://docs.google.com/spreadsheets/d/${s.spreadsheetId}/gviz/tq?tqx=out:csv${sheetParam}&t=${Date.now()}`;
+              const response = await fetch(url, { cache: 'no-store' });
+              if (response.ok) {
+                const csvText = await response.text();
+                if (!csvText.trim().toLowerCase().startsWith('<!doctype html')) {
+                  const workbook = XLSX.read(csvText, { type: 'string' });
+                  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                  const dados = XLSX.utils.sheet_to_json(sheet, { raw: true });
+                  await set(ref(rtdb, `tenants/${configEmpresa.id}/tabelaGoogle_${i}`), dados);
+                }
+              }
+            } catch (e) {
+              console.warn(`Erro ao sincronizar planilha adicional ${i}:`, e);
+            }
+          }
+        } catch (fsError) {
+          console.warn("Aviso: Falha ao salvar planilhas adicionais no Firestore.", fsError);
+        }
+      }
       
       setShowConfigModal(false);
       setConfigEmpresa(null);
@@ -467,6 +507,7 @@ export default function Empresas() {
       setSelectedSheet('');
       setFullSheetData([]);
       setSheetNames([]);
+      setAdditionalSpreadsheets([]);
     } catch (err) {
       console.error("Erro ao salvar configuração:", err);
       setError(err.message || 'Erro ao salvar configuração.');
@@ -705,84 +746,84 @@ export default function Empresas() {
               empresaAtual?.id === empresa.id ? 'ring-2 ring-[var(--primary)]' : ''
             }`}
           >
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-3">
-                <div className={`w-12 h-12 rounded-lg overflow-hidden shrink-0 ${empresa.appearance?.logo ? 'bg-white' : 'flex items-center justify-center'}`} style={{ border: '1px solid var(--border)', background: !empresa.appearance?.logo ? 'var(--surface-2)' : 'white' }}>
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-lg overflow-hidden shrink-0 ${empresa.appearance?.logo ? 'bg-white' : 'flex items-center justify-center'}`} style={{ border: '1px solid var(--border)', background: !empresa.appearance?.logo ? 'var(--surface-2)' : 'white' }}>
                   {empresa.appearance?.logo ? (
                     <img src={empresa.appearance.logo} alt={empresa.nome} className="w-full h-full object-cover object-center" />
                   ) : (
-                    <Building2 className="w-6 h-6" style={{ color: 'var(--text-dim)' }} />
+                    <Building2 className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: 'var(--text-dim)' }} />
                   )}
                 </div>
-                <div>
-                  <h3 className="font-semibold" style={{ color: 'var(--text)' }}>{empresa.nome}</h3>
-                  {empresa.cnpj && <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{empresa.cnpj}</p>}
-                  <p className="text-xs mt-1 font-mono" style={{ color: 'var(--text-dim)' }} title="ID da Empresa">ID: {empresa.id}</p>
+                <div className="min-w-0">
+                  <h3 className="font-semibold truncate" style={{ color: 'var(--text)' }} title={empresa.nome}>{empresa.nome}</h3>
+                  {empresa.cnpj && <p className="text-xs sm:text-sm truncate" style={{ color: 'var(--text-muted)' }}>{empresa.cnpj}</p>}
+                  <p className="text-xs font-mono truncate" style={{ color: 'var(--text-dim)' }} title="ID da Empresa">ID: {empresa.id}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 flex-wrap">
                 <button
                   onClick={(e) => handleEditEmpresa(e, empresa)}
-                  className="p-2 rounded-lg transition-colors" style={{ color: 'var(--text-dim)' }}
+                  className="p-1.5 sm:p-2 rounded-lg transition-colors shrink-0" style={{ color: 'var(--text-dim)' }}
                   title="Editar Empresa"
                 >
-                  <Pencil className="w-5 h-5" />
+                  <Pencil className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
 
                 <button
                   onClick={(e) => handleOpenAppearance(e, empresa)}
-                  className="p-2 rounded-lg transition-colors" style={{ color: 'var(--text-dim)' }}
+                  className="p-1.5 sm:p-2 rounded-lg transition-colors shrink-0" style={{ color: 'var(--text-dim)' }}
                   title="Configurar Aparência"
                 >
-                  <Palette className="w-5 h-5" />
+                  <Palette className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
 
                 <button
                   onClick={(e) => handleDeleteEmpresa(e, empresa)}
-                  className="p-2 rounded-lg transition-colors" style={{ color: 'var(--text-dim)' }}
+                  className="p-1.5 sm:p-2 rounded-lg transition-colors shrink-0" style={{ color: 'var(--text-dim)' }}
                   title="Excluir Empresa"
                 >
-                  <Trash2 className="w-5 h-5" />
+                  <Trash2 className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
 
                 <button
                   onClick={(e) => handleSync(e, empresa)}
                   disabled={!empresa.spreadsheetId || syncingId === empresa.id}
-                  className={`p-2 rounded-lg transition-colors ${
+                  className={`p-1.5 sm:p-2 rounded-lg transition-colors shrink-0 ${
                     empresa.spreadsheetId 
                       ? 'text-[var(--info)] bg-[var(--info-soft)]' 
                       : 'text-[var(--text-dim)] cursor-not-allowed'
                   }`}
                   title={syncingId === empresa.id ? "Sincronizando..." : "Sincronizar dados agora"}
                 >
-                  <RefreshCw className={`w-5 h-5 ${syncingId === empresa.id ? 'animate-spin' : ''}`} />
+                  <RefreshCw className={`w-4 h-4 sm:w-5 sm:h-5 ${syncingId === empresa.id ? 'animate-spin' : ''}`} />
                 </button>
 
                 <button
                   onClick={(e) => handleOpenOutlookModal(e, empresa)}
-                  className={`p-2 rounded-lg transition-colors ${
+                  className={`p-1.5 sm:p-2 rounded-lg transition-colors shrink-0 ${
                     empresa.outlookFolder 
                       ? 'text-[var(--warning)] bg-[var(--warning-soft)]' 
                       : 'text-[var(--text-dim)]'
                   }`}
                   title={empresa.outlookFolder ? `Pasta Outlook: ${empresa.outlookFolder}` : "Conectar pasta Outlook"}
                 >
-                  <Mail className="w-5 h-5" />
+                  <Mail className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
                 <button
                   onClick={(e) => handleOpenConfig(e, empresa)}
-                  className={`p-2 rounded-lg transition-colors ${
+                  className={`p-1.5 sm:p-2 rounded-lg transition-colors shrink-0 ${
                     empresa.spreadsheetId 
                       ? 'text-[var(--success)] bg-[var(--success-soft)]' 
                       : 'text-[var(--text-dim)]'
                   }`}
                   title={empresa.spreadsheetId ? "Configurar Planilha (Conectado)" : "Conectar Google Planilhas"}
                 >
-                  <FileSpreadsheet className="w-5 h-5" />
+                  <FileSpreadsheet className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
                 {empresaAtual?.id === empresa.id && (
-                  <div className="w-6 h-6 bg-[var(--primary)] rounded-full flex items-center justify-center">
-                    <Check className="w-4 h-4 text-white" />
+                  <div className="w-5 h-5 sm:w-6 sm:h-6 bg-[var(--primary)] rounded-full flex items-center justify-center shrink-0">
+                    <Check className="w-3 h-3 sm:w-4 sm:h-4 text-white" />
                   </div>
                 )}
               </div>
@@ -1008,6 +1049,65 @@ export default function Empresas() {
                   </button>
                 </div>
               )}
+
+              {/* Planilhas Adicionais */}
+              <div className="pt-4 mt-4" style={{ borderTop: '1px solid var(--border)' }}>
+                <h4 className="text-sm font-semibold mb-3" style={{ color: 'var(--text)' }}>Planilhas Adicionais (Tabela Dinâmica)</h4>
+                <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
+                  Adicione mais planilhas para combinar os dados nos Relatórios. Uma coluna "cenario" será criada automaticamente.
+                </p>
+
+                {additionalSpreadsheets.map((s, index) => (
+                  <div key={index} className="p-3 mb-2 rounded-lg" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-medium" style={{ color: 'var(--text)' }}>Planilha {index + 2}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newList = additionalSpreadsheets.filter((_, i) => i !== index);
+                          setAdditionalSpreadsheets(newList);
+                        }}
+                        className="text-[var(--danger)] p-1"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        placeholder="Nome do Cenário (ex: Cenário A)"
+                        value={s.label || ''}
+                        onChange={(e) => {
+                          const newList = [...additionalSpreadsheets];
+                          newList[index] = { ...newList[index], label: e.target.value };
+                          setAdditionalSpreadsheets(newList);
+                        }}
+                        className="form-input w-full text-xs"
+                      />
+                      <input
+                        type="text"
+                        placeholder="ID da Planilha Google"
+                        value={s.spreadsheetId || ''}
+                        onChange={(e) => {
+                          const newList = [...additionalSpreadsheets];
+                          newList[index] = { ...newList[index], spreadsheetId: e.target.value };
+                          setAdditionalSpreadsheets(newList);
+                        }}
+                        className="form-input w-full text-xs"
+                      />
+                    </div>
+                  </div>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={() => setAdditionalSpreadsheets([...additionalSpreadsheets, { label: '', spreadsheetId: '', sheetName: '' }])}
+                  className="btn btn-ghost w-full text-xs"
+                >
+                  <Plus className="w-3 h-3" />
+                  Adicionar Planilha
+                </button>
+              </div>
               </div>
             </form>
           </div>

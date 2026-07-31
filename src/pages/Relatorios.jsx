@@ -4,7 +4,7 @@ import { getDatabase, ref, onValue } from 'firebase/database';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { getEtapas, getStatusLabel } from '../services/database';
-import { FileText, Download, BarChart3, Users, AlertTriangle, Building2, Clock } from 'lucide-react';
+import { FileText, Download, BarChart3, Users, AlertTriangle, Building2, Clock, CalendarDays, FileSpreadsheet } from 'lucide-react';
 import { format } from 'date-fns';
 import { checkPermission } from './permissionUtils';
 
@@ -26,6 +26,8 @@ export default function Relatorios() {
   const [etapas, setEtapas] = useState([]);
   const [indicadores, setIndicadores] = useState(null);
   const [tab, setTab] = useState('resumo');
+  const [additionalSheetData, setAdditionalSheetData] = useState([]);
+  const [selectedColumns, setSelectedColumns] = useState([]);
 
   useEffect(() => {
     if (authUser?.id && empresaAtual?.id) {
@@ -454,6 +456,8 @@ export default function Relatorios() {
         <TabButton active={tab === 'concluidas_atraso'} onClick={() => setTab('concluidas_atraso')} icon={<Clock className="w-4 h-4" />} label="Concluídas c/ Atraso" />
         <TabButton active={tab === 'areas'} onClick={() => setTab('areas')} icon={<BarChart3 className="w-4 h-4" />} label="Por Área" />
         <TabButton active={tab === 'responsaveis'} onClick={() => setTab('responsaveis')} icon={<Users className="w-4 h-4" />} label="Responsáveis" />
+        <TabButton active={tab === 'por_dia'} onClick={() => setTab('por_dia')} icon={<CalendarDays className="w-4 h-4" />} label="Por Dia" />
+        <TabButton active={tab === 'tabela_dinamica'} onClick={() => setTab('tabela_dinamica')} icon={<FileSpreadsheet className="w-4 h-4" />} label="Tabela Dinâmica" />
         {viewAllCompanies && <TabButton active={tab === 'empresas'} onClick={() => setTab('empresas')} icon={<Building2 className="w-4 h-4" />} label="Por Empresa" />}
       </div>
 
@@ -630,6 +634,63 @@ export default function Relatorios() {
           </table>
         </div>
       )}
+
+      {tab === 'tabela_dinamica' && (
+        <div className="card p-6">
+          <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--text)' }}>Tabela Dinâmica</h2>
+          <p className="text-sm mb-6" style={{ color: 'var(--text-muted)' }}>
+            Combine dados de múltiplas planilhas. A coluna "cenario" identifica a origem de cada registro.
+          </p>
+
+          {empresaAtual ? (
+            <TabelaDinamicaComponent empresaId={empresaAtual.id} />
+          ) : (
+            <p className="text-center py-8" style={{ color: 'var(--text-muted)' }}>
+              Selecione uma empresa para visualizar a tabela dinâmica.
+            </p>
+          )}
+        </div>
+      )}
+
+      {tab === 'por_dia' && (
+        <div className="card p-6">
+          <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--text)' }}>Etapas por Dia</h2>
+          <p className="text-sm mb-6" style={{ color: 'var(--text-muted)' }}>Distribuição de etapas por data prevista (eixo: responsável)</p>
+          
+          {(() => {
+            // Agrupa por dia e por responsável
+            const porDia = {};
+            const todosUsuarios = new Set();
+            etapas.forEach(e => {
+              if (!e.dataPrevista) return;
+              const dia = format(new Date(e.dataPrevista), 'dd/MM');
+              const usuario = e.responsavel || 'Sem responsável';
+              todosUsuarios.add(usuario);
+              if (!porDia[dia]) porDia[dia] = { total: 0, usuarios: {} };
+              porDia[dia].total++;
+              porDia[dia].usuarios[usuario] = (porDia[dia].usuarios[usuario] || 0) + 1;
+            });
+            const listaUsuarios = Array.from(todosUsuarios).sort();
+            const dados = Object.entries(porDia)
+              .sort(([a], [b]) => {
+                const [dA, mA] = a.split('/').map(Number);
+                const [dB, mB] = b.split('/').map(Number);
+                return mA - mB || dA - dB;
+              })
+              .slice(-15)
+              .map(([dia, vals]) => ({ label: dia, total: vals.total, usuarios: vals.usuarios }));
+            
+            return (
+              <GraficoColunasPorUsuario
+                dados={dados}
+                listaUsuarios={listaUsuarios}
+                alturaMax={200}
+              />
+            );
+          })()}
+        </div>
+      )}
+
     </div>
   );
 }
@@ -662,6 +723,319 @@ function StatCard({ label, value, color }) {
     <div className="p-4 rounded-lg" style={{ background: colors[color].bg, color: colors[color].text }}>
       <p className="text-sm opacity-80 font-medium">{label}</p>
       <p className="text-2xl font-bold">{value}</p>
+    </div>
+  );
+}
+
+const CORES_USUARIOS = [
+  '#35dab3', '#26b8e0', '#7c9cff', '#f5b64d', '#fb7169',
+  '#a78bfa', '#f472b6', '#34d399', '#fbbf24', '#60a5fa',
+  '#fb923c', '#c084fc', '#2dd4bf', '#f87171', '#4ade80',
+];
+
+function GraficoColunasPorUsuario({ dados, listaUsuarios, alturaMax = 200 }) {
+  const [tooltip, setTooltip] = useState(null);
+
+  if (!dados || dados.length === 0) {
+    return (
+      <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>
+        Nenhum dado disponível para o gráfico
+      </div>
+    );
+  }
+
+  const maxTotal = Math.max(...dados.map(d => d.total), 1);
+
+  const makeSummary = (item) => {
+    const lines = listaUsuarios
+      .filter(u => (item.usuarios[u] || 0) > 0)
+      .map(u => `${u}: ${item.usuarios[u]} tarefa(s)`);
+    return [`📅 ${item.label}`, `Total: ${item.total}`, '', ...lines].join('\n');
+  };
+
+  return (
+    <div className="w-full overflow-x-auto relative">
+      <div className="flex items-end gap-3 pb-6 min-w-[400px]" style={{ height: alturaMax + 60 }}>
+        {dados.map((item, idx) => {
+          const alturaTotal = (item.total / maxTotal) * alturaMax;
+
+          return (
+            <div
+              key={idx}
+              className="flex-1 flex flex-col items-center gap-1 min-w-[40px] relative"
+              onMouseEnter={(e) => setTooltip({ item, x: e.clientX, y: e.clientY })}
+              onMouseLeave={() => setTooltip(null)}
+              onMouseMove={(e) => setTooltip(prev => prev ? { ...prev, x: e.clientX, y: e.clientY } : null)}
+            >
+              <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{item.total}</span>
+              <div className="w-full flex flex-col-reverse rounded-t-md overflow-hidden cursor-pointer" style={{ height: alturaTotal, background: 'var(--surface-2)' }}>
+                {listaUsuarios.map((usuario, uIdx) => {
+                  const count = item.usuarios[usuario] || 0;
+                  if (count === 0) return null;
+                  const altura = (count / item.total) * alturaTotal;
+                  return (
+                    <div
+                      key={usuario}
+                      style={{ height: `${altura}px`, background: CORES_USUARIOS[uIdx % CORES_USUARIOS.length], minHeight: '2px' }}
+                      title={`${usuario}: ${count} tarefa(s)`}
+                    />
+                  );
+                })}
+              </div>
+              <span className="text-xs truncate max-w-full text-center" style={{ color: 'var(--text-muted)' }} title={item.label}>{item.label}</span>
+            </div>
+          );
+        })}
+      </div>
+      {/* Tooltip */}
+      {tooltip && (
+        <div
+          className="fixed z-50 p-3 rounded-lg shadow-lg text-xs pointer-events-none"
+          style={{
+            left: Math.min(tooltip.x + 10, window.innerWidth - 200),
+            top: Math.max(tooltip.y - 10, 10),
+            background: 'var(--surface-2)',
+            border: '1px solid var(--border)',
+            color: 'var(--text)',
+            minWidth: '160px'
+          }}
+        >
+          <p className="font-semibold mb-1" style={{ color: 'var(--accent)' }}>📅 {tooltip.item.label}</p>
+          <p className="mb-1" style={{ color: 'var(--text-muted)' }}>Total: <strong>{tooltip.item.total}</strong></p>
+          <div className="mt-1 pt-1" style={{ borderTop: '1px solid var(--border)' }}>
+            {listaUsuarios
+              .filter(u => (tooltip.item.usuarios[u] || 0) > 0)
+              .map((u, uIdx) => (
+                <div key={u} className="flex items-center gap-2 mt-1">
+                  <div className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: CORES_USUARIOS[uIdx % CORES_USUARIOS.length] }} />
+                  <span className="flex-1 truncate">{u}</span>
+                  <span className="font-medium">{tooltip.item.usuarios[u]}</span>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+      {/* Legenda */}
+      <div className="flex flex-wrap items-center gap-3 mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+        {listaUsuarios.map((usuario, uIdx) => (
+          <div key={usuario} className="flex items-center gap-1">
+            <div className="w-3 h-3 rounded-sm" style={{ background: CORES_USUARIOS[uIdx % CORES_USUARIOS.length] }} />
+            <span>{usuario}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TabelaDinamicaComponent({ empresaId }) {
+  const [data, setData] = useState([]);
+  const [headers, setHeaders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedCols, setSelectedCols] = useState([]);
+  const db = getDatabase();
+
+  useEffect(() => {
+    if (!empresaId) return;
+    setLoading(true);
+
+    const fetchAll = async () => {
+      try {
+        // Fetch main spreadsheet
+        const mainSnap = await new Promise(resolve => {
+          onValue(ref(db, `tenants/${empresaId}/tabelaGoogle`), resolve, { onlyOnce: true });
+        });
+        const mainData = mainSnap.val() || [];
+
+        // Fetch additional spreadsheets config
+        const firestoreDb = getFirestore();
+        const empresaSnap = await new Promise(resolve => {
+          onSnapshot(doc(firestoreDb, 'tenants', empresaId), resolve);
+        });
+        const empresaData = empresaSnap.data();
+        const additional = empresaData?.additionalSpreadsheets || [];
+
+        const allRows = [];
+        const allHeaders = new Set();
+
+        // Add main data with "Principal" cenario
+        const mainArray = Array.isArray(mainData) ? mainData : Object.values(mainData);
+        mainArray.forEach(row => {
+          if (typeof row === 'object' && row !== null) {
+            const newRow = { cenario: 'Principal', ...row };
+            allRows.push(newRow);
+            Object.keys(newRow).forEach(k => allHeaders.add(k));
+          }
+        });
+
+        // Fetch and add additional spreadsheets
+        for (let i = 0; i < additional.length; i++) {
+          const s = additional[i];
+          if (!s.spreadsheetId) continue;
+          try {
+            const snap = await new Promise(resolve => {
+              onValue(ref(db, `tenants/${empresaId}/tabelaGoogle_${i}`), resolve, { onlyOnce: true });
+            });
+            const addData = snap.val() || [];
+            const addArray = Array.isArray(addData) ? addData : Object.values(addData);
+            const label = s.label || `Planilha ${i + 1}`;
+            addArray.forEach(row => {
+              if (typeof row === 'object' && row !== null) {
+                const newRow = { cenario: label, ...row };
+                allRows.push(newRow);
+                Object.keys(newRow).forEach(k => allHeaders.add(k));
+              }
+            });
+          } catch (e) {
+            console.warn(`Erro ao carregar planilha adicional ${i}:`, e);
+          }
+        }
+
+        const headerList = Array.from(allHeaders);
+        setHeaders(headerList);
+        setSelectedCols(headerList.slice(0, 10)); // Default: first 10 columns
+        setData(allRows);
+      } catch (e) {
+        console.error('Erro ao carregar dados da tabela dinâmica:', e);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchAll();
+  }, [empresaId, db]);
+
+  const toggleColumn = (col) => {
+    setSelectedCols(prev =>
+      prev.includes(col) ? prev.filter(c => c !== col) : [...prev, col]
+    );
+  };
+
+  if (loading) {
+    return (
+      <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>
+        Carregando dados...
+      </div>
+    );
+  }
+
+  if (data.length === 0) {
+    return (
+      <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>
+        Nenhum dado encontrado. Configure as planilhas na página Empresas.
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Column selector */}
+      <div className="mb-4">
+        <p className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Colunas visíveis:</p>
+        <div className="flex flex-wrap gap-1">
+          {headers.map(col => (
+            <button
+              key={col}
+              onClick={() => toggleColumn(col)}
+              className={`text-xs px-2 py-1 rounded-full transition-colors ${
+                selectedCols.includes(col)
+                  ? 'text-white bg-[var(--accent)]'
+                  : 'text-[var(--text-muted)] bg-[var(--surface-2)] hover:bg-[var(--surface)]'
+              }`}
+            >
+              {col}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Data table */}
+      <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid var(--border)' }}>
+        <table className="w-full text-xs text-left">
+          <thead style={{ background: 'var(--surface-2)', color: 'var(--text-muted)' }}>
+            <tr>
+              <th className="px-3 py-2 font-medium whitespace-nowrap">#</th>
+              {selectedCols.map(col => (
+                <th key={col} className="px-3 py-2 font-medium whitespace-nowrap">{col}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
+            {data.map((row, idx) => (
+              <tr key={idx} className="hover:bg-[var(--surface-2)]">
+                <td className="px-3 py-1.5 whitespace-nowrap" style={{ color: 'var(--text-dim)' }}>{idx + 1}</td>
+                {selectedCols.map(col => (
+                  <td key={col} className="px-3 py-1.5 whitespace-nowrap max-w-[200px] truncate" style={{ color: 'var(--text)' }}>
+                    {String(row[col] ?? '')}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
+        Total: {data.length} registros
+      </p>
+    </div>
+  );
+}
+
+function GraficoColunas({ dados, alturaMax = 200 }) {
+  if (!dados || dados.length === 0) {
+    return (
+      <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>
+        Nenhum dado disponível para o gráfico
+      </div>
+    );
+  }
+
+  const maxTotal = Math.max(...dados.map(d => d.total), 1);
+
+  return (
+    <div className="w-full overflow-x-auto">
+      <div className="flex items-end gap-3 pb-6 min-w-[400px]" style={{ height: alturaMax + 60 }}>
+        {dados.map((item, idx) => {
+          const alturaTotal = (item.total / maxTotal) * alturaMax;
+          const alturaConcluidas = (item.concluidas / item.total) * alturaTotal || 0;
+          const alturaAtrasadas = (item.atrasadas / item.total) * alturaTotal || 0;
+          const alturaPendentes = alturaTotal - alturaConcluidas - alturaAtrasadas;
+
+          return (
+            <div key={idx} className="flex-1 flex flex-col items-center gap-1 min-w-[40px]">
+              <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{item.total}</span>
+              <div className="w-full flex flex-col-reverse rounded-t-md overflow-hidden" style={{ height: alturaTotal, background: 'var(--surface-2)' }}>
+                {alturaPendentes > 0 && (
+                  <div style={{ height: `${alturaPendentes}px`, background: 'var(--warning-soft)', minHeight: alturaPendentes > 0 ? '2px' : '0' }} />
+                )}
+                {alturaAtrasadas > 0 && (
+                  <div style={{ height: `${alturaAtrasadas}px`, background: 'var(--danger-soft)', minHeight: alturaAtrasadas > 0 ? '2px' : '0' }} />
+                )}
+                {alturaConcluidas > 0 && (
+                  <div style={{ height: `${alturaConcluidas}px`, background: 'var(--success-soft)', minHeight: alturaConcluidas > 0 ? '2px' : '0' }} />
+                )}
+              </div>
+              <span className="text-xs truncate max-w-full text-center" style={{ color: 'var(--text-muted)' }} title={item.label}>{item.label}</span>
+            </div>
+          );
+        })}
+      </div>
+      {/* Legenda */}
+      <div className="flex items-center gap-4 mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+        <div className="flex items-center gap-1">
+          <div className="w-3 h-3 rounded-sm" style={{ background: 'var(--success-soft)' }} />
+          <span>Concluídas</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <div className="w-3 h-3 rounded-sm" style={{ background: 'var(--danger-soft)' }} />
+          <span>Atrasadas</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <div className="w-3 h-3 rounded-sm" style={{ background: 'var(--warning-soft)' }} />
+          <span>Pendentes</span>
+        </div>
+      </div>
     </div>
   );
 }
