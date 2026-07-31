@@ -1,10 +1,10 @@
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
 import { getDatabase, ref, onValue } from 'firebase/database';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
-import { getEtapas, getStatusLabel } from '../services/database';
-import { FileText, Download, BarChart3, Users, AlertTriangle, Building2, Clock, CalendarDays, FileSpreadsheet } from 'lucide-react';
+import { getStatusLabel } from '../services/database';
+import { FileText, Download, BarChart3, Users, AlertTriangle, Building2, Clock, CalendarDays, FileSpreadsheet, GripVertical, KeyRound, GitCompareArrows } from 'lucide-react';
 import { format } from 'date-fns';
 import { checkPermission } from './permissionUtils';
 
@@ -636,20 +636,7 @@ export default function Relatorios() {
       )}
 
       {tab === 'tabela_dinamica' && (
-        <div className="card p-6">
-          <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--text)' }}>Tabela Dinâmica</h2>
-          <p className="text-sm mb-6" style={{ color: 'var(--text-muted)' }}>
-            Combine dados de múltiplas planilhas. A coluna "cenario" identifica a origem de cada registro.
-          </p>
-
-          {empresaAtual ? (
-            <TabelaDinamicaComponent empresaId={empresaAtual.id} />
-          ) : (
-            <p className="text-center py-8" style={{ color: 'var(--text-muted)' }}>
-              Selecione uma empresa para visualizar a tabela dinâmica.
-            </p>
-          )}
-        </div>
+        <TabelaDinamicaContainer empresaId={empresaAtual?.id} />
       )}
 
       {tab === 'por_dia' && (
@@ -828,12 +815,140 @@ function GraficoColunasPorUsuario({ dados, listaUsuarios, alturaMax = 200 }) {
   );
 }
 
-function TabelaDinamicaComponent({ empresaId }) {
+function TabelaDinamicaContainer({ empresaId }) {
+  const [activeTab, setActiveTab] = useState('cenario1');
+  const [dataCenario1, setDataCenario1] = useState([]);
+  const [dataCenario2, setDataCenario2] = useState([]);
+  const [colsCenario1, setColsCenario1] = useState([]);
+  const [colsCenario2, setColsCenario2] = useState([]);
+  const [cenarioSelecionado1, setCenarioSelecionado1] = useState('Principal');
+  const [cenarioSelecionado2, setCenarioSelecionado2] = useState('Principal');
+
+  if (!empresaId) {
+    return (
+      <div className="card p-6 text-center" style={{ color: 'var(--text-muted)' }}>
+        Selecione uma empresa para visualizar a tabela dinâmica.
+      </div>
+    );
+  }
+
+  return (
+    <div className="card p-0">
+      <div className="flex gap-2 p-4" style={{ borderBottom: '1px solid var(--border)' }}>
+        <TabButton active={activeTab === 'cenario1'} onClick={() => setActiveTab('cenario1')} icon={<FileSpreadsheet className="w-4 h-4" />} label="Cenário 1" />
+        <TabButton active={activeTab === 'cenario2'} onClick={() => setActiveTab('cenario2')} icon={<FileSpreadsheet className="w-4 h-4" />} label="Cenário 2" />
+        <TabButton active={activeTab === 'conciliacao'} onClick={() => setActiveTab('conciliacao')} icon={<GitCompareArrows className="w-4 h-4" />} label="Conciliação" />
+      </div>
+      <div className="p-6">
+        {activeTab === 'cenario1' && (
+          <TabelaDinamicaComponent
+            empresaId={empresaId}
+            onDataChange={setDataCenario1}
+            onColsChange={setColsCenario1}
+            cenarioSelecionado={cenarioSelecionado1}
+            setCenarioSelecionado={setCenarioSelecionado1}
+            instanceId="1"
+          />
+        )}
+        {activeTab === 'cenario2' && (
+          <TabelaDinamicaComponent
+            empresaId={empresaId}
+            onDataChange={setDataCenario2}
+            onColsChange={setColsCenario2}
+            cenarioSelecionado={cenarioSelecionado2}
+            setCenarioSelecionado={setCenarioSelecionado2}
+            instanceId="2"
+          />
+        )}
+        {activeTab === 'conciliacao' && (
+          <TabelaConciliacao data1={dataCenario1} data2={dataCenario2} cols1={colsCenario1} cols2={colsCenario2} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TabelaConciliacao({ data1, data2, cols1, cols2 }) {
+  const { headers, conciliacaoData } = useMemo(() => {
+    if (!data1.length || !data2.length || !data1[0]?.chave_dinamica || !data2[0]?.chave_dinamica) {
+      return { headers: [], conciliacaoData: [] };
+    }
+
+    const map1 = new Map(data1.map(row => [row.chave_dinamica, row]));
+    const map2 = new Map(data2.map(row => [row.chave_dinamica, row]));
+    const allKeys = new Set([...map1.keys(), ...map2.keys()]);
+    const commonCols = new Set([...cols1, ...cols2].filter(c => c !== 'chave_dinamica' && c !== 'cenario'));
+
+    const result = [];
+    allKeys.forEach(key => {
+      const row1 = map1.get(key);
+      const row2 = map2.get(key);
+      let status = '';
+      if (row1 && row2) status = 'Encontrado em ambos';
+      else if (row1) status = 'Apenas no Cenário 1';
+      else if (row2) status = 'Apenas no Cenário 2';
+
+      const rowData = { chave_dinamica: key, status };
+      commonCols.forEach(col => {
+        const val1 = row1?.[col] ?? '';
+        const val2 = row2?.[col] ?? '';
+        rowData[`${col}_1`] = val1;
+        rowData[`${col}_2`] = val2;
+        rowData[`${col}_diff`] = val1 !== val2;
+      });
+      result.push(rowData);
+    });
+
+    return { headers: Array.from(commonCols), conciliacaoData: result };
+  }, [data1, data2, cols1, cols2]);
+
+  if (!conciliacaoData.length) {
+    return <div className="text-center py-8" style={{ color: 'var(--text-muted)' }}>Configure a chave e os dados nos Cenários 1 e 2 para ver a conciliação.</div>;
+  }
+
+  return (
+    <div>
+      <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--text)' }}>Conciliação de Cenários</h2>
+      <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid var(--border)' }}>
+        <table className="w-full text-xs text-left">
+          <thead style={{ background: 'var(--surface-2)', color: 'var(--text-muted)' }}>
+            <tr>
+              <th className="px-3 py-2 font-medium sticky left-0 bg-[var(--surface-2)] z-10">Chave</th>
+              <th className="px-3 py-2 font-medium">Status</th>
+              {headers.map(h => <th key={h} colSpan={2} className="px-3 py-2 font-medium text-center border-l border-[var(--border)]">{h}</th>)}
+            </tr>
+            <tr>
+              <th className="px-3 py-2 font-medium sticky left-0 bg-[var(--surface-2)] z-10"></th>
+              <th className="px-3 py-2 font-medium"></th>
+              {headers.map(h => <React.Fragment key={h}><th className="px-3 py-2 font-medium border-l border-[var(--border)]">Cenário 1</th><th className="px-3 py-2 font-medium">Cenário 2</th></React.Fragment>)}
+            </tr>
+          </thead>
+          <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
+            {conciliacaoData.map((row, idx) => (
+              <tr key={idx} className="hover:bg-[var(--surface-2)]">
+                <td className="px-3 py-1.5 whitespace-nowrap sticky left-0 bg-inherit z-10 font-medium" style={{ color: 'var(--text)' }}>{row.chave_dinamica}</td>
+                <td className="px-3 py-1.5 whitespace-nowrap"><span className={`badge ${row.status === 'Encontrado em ambos' ? 'badge-success' : row.status === 'Apenas no Cenário 1' ? 'badge-info' : 'badge-warning'}`}>{row.status}</span></td>
+                {headers.map(h => <React.Fragment key={h}><td className={`px-3 py-1.5 whitespace-nowrap border-l border-[var(--border)] ${row[`${h}_diff`] ? 'bg-red-500/10' : ''}`}>{String(row[`${h}_1`])}</td><td className={`px-3 py-1.5 whitespace-nowrap ${row[`${h}_diff`] ? 'bg-red-500/10' : ''}`}>{String(row[`${h}_2`])}</td></React.Fragment>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function TabelaDinamicaComponent({ empresaId, onDataChange, onColsChange, instanceId, cenarioSelecionado, setCenarioSelecionado }) {
   const [data, setData] = useState([]);
   const [headers, setHeaders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedCols, setSelectedCols] = useState([]);
+  const [draggedCol, setDraggedCol] = useState(null);
+  const [keyTemplate, setKeyTemplate] = useState('area&codigo&nome');
+  const [dynamicKeyIncluded, setDynamicKeyIncluded] = useState(false);
+  const [cenarios, setCenarios] = useState([]);
   const db = getDatabase();
+  const firestoreDb = getFirestore();
 
   useEffect(() => {
     if (!empresaId) return;
@@ -841,6 +956,7 @@ function TabelaDinamicaComponent({ empresaId }) {
 
     const fetchAll = async () => {
       try {
+        const cenariosDisponiveis = [{ label: 'Principal', nome: 'Principal', index: -1 }];
         // Fetch main spreadsheet
         const mainSnap = await new Promise(resolve => {
           onValue(ref(db, `tenants/${empresaId}/tabelaGoogle`), resolve, { onlyOnce: true });
@@ -848,12 +964,15 @@ function TabelaDinamicaComponent({ empresaId }) {
         const mainData = mainSnap.val() || [];
 
         // Fetch additional spreadsheets config
-        const firestoreDb = getFirestore();
         const empresaSnap = await new Promise(resolve => {
           onSnapshot(doc(firestoreDb, 'tenants', empresaId), resolve);
         });
         const empresaData = empresaSnap.data();
         const additional = empresaData?.additionalSpreadsheets || [];
+        additional.forEach((s, i) => {
+          cenariosDisponiveis.push({ label: s.label || `Planilha ${i + 1}`, nome: s.label || `Planilha ${i + 1}` });
+        });
+        setCenarios(cenariosDisponiveis);
 
         const allRows = [];
         const allHeaders = new Set();
@@ -905,10 +1024,104 @@ function TabelaDinamicaComponent({ empresaId }) {
     fetchAll();
   }, [empresaId, db]);
 
+  useEffect(() => {
+    if (!empresaId || !cenarioSelecionado) return;
+
+    const fetchCenarioData = async () => {
+      setLoading(true);
+      try {
+        const empresaDoc = await new Promise(resolve => onSnapshot(doc(firestoreDb, 'tenants', empresaId), resolve));
+        const empresaConfig = empresaDoc.data();
+        const cenariosDisponiveis = [{ label: empresaConfig?.mainSpreadsheetLabel || 'Principal', nome: 'Principal', index: -1 }];
+        (empresaConfig?.additionalSpreadsheets || []).forEach((s, i) => {
+          cenariosDisponiveis.push({ label: s.label || `Planilha ${i + 1}`, nome: s.label || `Planilha ${i + 1}`, index: i });
+        });
+        setCenarios(cenariosDisponiveis);
+
+        const cenarioInfo = cenariosDisponiveis.find(c => c.nome === cenarioSelecionado);
+        if (!cenarioInfo) return;
+
+        const dataPath = cenarioInfo.index === -1 ? `tenants/${empresaId}/tabelaGoogle` : `tenants/${empresaId}/tabelaGoogle_${cenarioInfo.index}`;
+        const dataSnap = await new Promise(resolve => onValue(ref(db, dataPath), resolve, { onlyOnce: true }));
+        const rawData = dataSnap.val() || [];
+        const dataArray = Array.isArray(rawData) ? rawData : Object.values(rawData);
+
+        const allHeaders = new Set();
+        dataArray.forEach(row => Object.keys(row).forEach(k => allHeaders.add(k)));
+
+        setHeaders(Array.from(allHeaders));
+        setData(dataArray.map(row => ({ ...row, cenario: cenarioSelecionado })));
+      } catch (error) {
+        console.error("Erro ao carregar dados do cenário:", error);
+        setData([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchCenarioData();
+  }, [empresaId, cenarioSelecionado, db, firestoreDb]);
+
+  const dadosCenario = useMemo(() => {
+    return data.filter(row => row.cenario === cenarioSelecionado);
+  }, [data, cenarioSelecionado]);
+
+  useEffect(() => {
+    // Se a chave dinâmica for incluída, adicione-a aos cabeçalhos e colunas selecionadas
+    if (dynamicKeyIncluded && !headers.includes('chave_dinamica')) {
+      setHeaders(prev => [...prev, 'chave_dinamica']);
+      if (!selectedCols.includes('chave_dinamica')) {
+        setSelectedCols(prev => ['chave_dinamica', ...prev]);
+      }
+    }
+  }, [dynamicKeyIncluded, headers, selectedCols]);
+
+  const processedData = useMemo(() => {
+    if (!keyTemplate) return dadosCenario.map(row => ({ ...row, chave_dinamica: '' }));
+
+    const columnsToJoin = keyTemplate.split('&').map(s => s.trim()).filter(Boolean);
+    if (columnsToJoin.length === 0) return dadosCenario.map(row => ({ ...row, chave_dinamica: '' }));
+
+    return dadosCenario.map(row => {
+      const generatedKey = columnsToJoin
+        .map(colName => row[colName] ?? '')
+        .join('&');
+      return { ...row, chave_dinamica: generatedKey };
+    });
+  }, [dadosCenario, keyTemplate]);
+
+  useEffect(() => {
+    if (onDataChange) onDataChange(processedData);
+    if (onColsChange) onColsChange(selectedCols);
+  }, [processedData, selectedCols, onDataChange, onColsChange]);
+
   const toggleColumn = (col) => {
     setSelectedCols(prev =>
       prev.includes(col) ? prev.filter(c => c !== col) : [...prev, col]
     );
+  };
+
+  const handleDragStart = (e, col) => {
+    setDraggedCol(col);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = (e, targetCol) => {
+    e.preventDefault();
+    if (draggedCol && draggedCol !== targetCol) {
+      const fromIndex = selectedCols.indexOf(draggedCol);
+      const toIndex = selectedCols.indexOf(targetCol);
+      const newCols = [...selectedCols];
+      // Move o item arrastado para a nova posição
+      newCols.splice(fromIndex, 1);
+      newCols.splice(toIndex, 0, draggedCol);
+      setSelectedCols(newCols);
+    }
+    setDraggedCol(null);
   };
 
   if (loading) {
@@ -929,11 +1142,54 @@ function TabelaDinamicaComponent({ empresaId }) {
 
   return (
     <div>
-      {/* Column selector */}
+      <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+        Selecione as colunas para exibir e arraste os cabeçalhos para reordená-las.
+      </p>
+      {/* Seletor de Cenário */}
+      <div className="mb-6">
+        <label className="form-label">Fonte de Dados (Cenário)</label>
+        <select
+          value={cenarioSelecionado}
+          onChange={(e) => setCenarioSelecionado(e.target.value)}
+          className="form-input w-full max-w-md"
+        >
+          {cenarios.map(c => (
+            <option key={c.label} value={c.nome}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      {/* Gerador de Chave */}
+      <div className="mb-6">
+        <label className="form-label flex items-center gap-2">Gerador de Chave</label>
+        <div className="flex items-center gap-2">
+          <div className="relative flex-grow max-w-md">
+            <KeyRound className="w-4 h-4 text-[var(--text-muted)] absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={keyTemplate}
+              onChange={(e) => setKeyTemplate(e.target.value)}
+              className="form-input w-full pl-9"
+              placeholder="Ex: area&codigo&nome"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setDynamicKeyIncluded(true)}
+            className="btn btn-secondary"
+          >
+            Incluir Chave na Tabela
+          </button>
+        </div>
+        <p className="form-hint">Use '&' para separar os nomes das colunas que deseja combinar.</p>
+      </div>
+
+      {/* Seletor de Colunas */}
       <div className="mb-4">
         <p className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Colunas visíveis:</p>
         <div className="flex flex-wrap gap-1">
-          {headers.map(col => (
+          {['chave_dinamica', ...headers].sort().map(col => (
             <button
               key={col}
               onClick={() => toggleColumn(col)}
@@ -949,21 +1205,31 @@ function TabelaDinamicaComponent({ empresaId }) {
         </div>
       </div>
 
-      {/* Data table */}
+      {/* Tabela de Dados */}
       <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid var(--border)' }}>
         <table className="w-full text-xs text-left">
           <thead style={{ background: 'var(--surface-2)', color: 'var(--text-muted)' }}>
             <tr>
-              <th className="px-3 py-2 font-medium whitespace-nowrap">#</th>
               {selectedCols.map(col => (
-                <th key={col} className="px-3 py-2 font-medium whitespace-nowrap">{col}</th>
+                <th 
+                  key={col} 
+                  className="px-3 py-2 font-medium whitespace-nowrap cursor-move"
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, col)}
+                  onDragOver={handleDragOver}
+                  onDrop={(e) => handleDrop(e, col)}
+                >
+                  <div className="flex items-center gap-1">
+                    <GripVertical className="w-3 h-3 text-[var(--text-dim)]" />
+                    {col}
+                  </div>
+                </th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
-            {data.map((row, idx) => (
+            {processedData.map((row, idx) => (
               <tr key={idx} className="hover:bg-[var(--surface-2)]">
-                <td className="px-3 py-1.5 whitespace-nowrap" style={{ color: 'var(--text-dim)' }}>{idx + 1}</td>
                 {selectedCols.map(col => (
                   <td key={col} className="px-3 py-1.5 whitespace-nowrap max-w-[200px] truncate" style={{ color: 'var(--text)' }}>
                     {String(row[col] ?? '')}
@@ -976,7 +1242,7 @@ function TabelaDinamicaComponent({ empresaId }) {
       </div>
 
       <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
-        Total: {data.length} registros
+        Total: {processedData.length} registros
       </p>
     </div>
   );

@@ -6,7 +6,7 @@ import { firestore, db as rtdb } from '../firebase';
 import { usePermissao } from '../hooks/usePermissao';
 import { checkPermission } from './permissionUtils';
 import { Plus, Building2, Check, FileSpreadsheet, RefreshCw, Trash2, Pencil, Palette, Upload, Image as ImageIcon, Mail } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx'; // eslint-disable-line
 import { initiate_outlook_auth } from '../services/outlookAuthService';
 
 export default function Empresas() {
@@ -46,7 +46,8 @@ export default function Empresas() {
   const [sheetNames, setSheetNames] = useState([]);
   const [selectedSheet, setSelectedSheet] = useState('');
   const [currentWorkbook, setCurrentWorkbook] = useState(null);
-  const [syncingId, setSyncingId] = useState(null);
+  const [mainSpreadsheetLabel, setMainSpreadsheetLabel] = useState('');
+  const [syncingId, setSyncingId] = useState(null); // eslint-disable-line
   const [additionalSpreadsheets, setAdditionalSpreadsheets] = useState([]);
   const [additionalData, setAdditionalData] = useState({});
   const [loadingAdditionalPreview, setLoadingAdditionalPreview] = useState({});
@@ -281,7 +282,7 @@ export default function Empresas() {
     }
   };
 
-  const fetchDataFromGoogle = async (id) => {
+  const fetchDataFromGoogle = async (id, sheetName = '') => {
     if (!id) return;
     setLoadingPreview(true);
     setError('');
@@ -304,7 +305,7 @@ export default function Empresas() {
       setCurrentWorkbook(workbook);
 
       // Define a aba selecionada (ou a primeira se não houver seleção válida)
-      let sheetToShow = selectedSheet;
+      let sheetToShow = sheetName || selectedSheet;
       if (!sheetToShow || !workbook.SheetNames.includes(sheetToShow)) {
         sheetToShow = workbook.SheetNames[0];
         setSelectedSheet(sheetToShow);
@@ -321,6 +322,47 @@ export default function Empresas() {
       setError('Erro ao sincronizar dados. Verifique o ID e as permissões da planilha.');
     } finally {
       setLoadingPreview(false);
+    }
+  };
+
+  const fetchAdditionalDataFromGoogle = async (spreadsheetId, index) => {
+    if (!spreadsheetId) return;
+    setLoadingAdditionalPreview(prev => ({ ...prev, [index]: true }));
+
+    try {
+      const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=xlsx`;
+      const response = await fetch(url, { cache: 'no-store' });
+      if (!response.ok) throw new Error('Não foi possível acessar a planilha.');
+
+      const arrayBuffer = await response.arrayBuffer();
+      const workbook = XLSX.read(arrayBuffer);
+
+      if (workbook.SheetNames.length === 0) throw new Error('A planilha parece estar vazia.');
+
+      const currentSheetName = additionalSpreadsheets[index]?.sheetName;
+      const sheetToShow = currentSheetName && workbook.SheetNames.includes(currentSheetName)
+        ? currentSheetName
+        : workbook.SheetNames[0];
+
+      const sheet = workbook.Sheets[sheetToShow];
+      const dataArrays = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true });
+
+      setAdditionalData(prev => ({
+        ...prev,
+        [index]: {
+          workbook,
+          sheetNames: workbook.SheetNames,
+          preview: dataArrays.slice(0, 5)
+        }
+      }));
+
+      const newList = [...additionalSpreadsheets];
+      newList[index] = { ...newList[index], sheetName: sheetToShow };
+      setAdditionalSpreadsheets(newList);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingAdditionalPreview(prev => ({ ...prev, [index]: false }));
     }
   };
 
@@ -345,6 +387,7 @@ export default function Empresas() {
     const id = empresa.spreadsheetId || '';
     setSpreadsheetId(id);
     setSelectedSheet(empresa.sheetName || '');
+    setMainSpreadsheetLabel(empresa.mainSpreadsheetLabel || 'Principal');
     setSheetNames([]);
     setCurrentWorkbook(null);
     setShowConfigModal(true);
@@ -453,7 +496,8 @@ export default function Empresas() {
       try {
         await setDoc(doc(firestore, 'tenants', configEmpresa.id), {
           spreadsheetId: spreadsheetId.trim(),
-          sheetName: selectedSheet
+          sheetName: selectedSheet,
+          mainSpreadsheetLabel: mainSpreadsheetLabel.trim() || 'Principal'
         }, { merge: true });
       } catch (fsError) {
         // Apenas loga o aviso, não impede a continuação
@@ -488,8 +532,9 @@ export default function Empresas() {
                 if (!csvText.trim().toLowerCase().startsWith('<!doctype html')) {
                   const workbook = XLSX.read(csvText, { type: 'string' });
                   const sheet = workbook.Sheets[workbook.SheetNames[0]];
-                  const dados = XLSX.utils.sheet_to_json(sheet, { raw: true });
-                  await set(ref(rtdb, `tenants/${configEmpresa.id}/tabelaGoogle_${i}`), dados);
+                  const rawData = XLSX.utils.sheet_to_json(sheet, { raw: true });
+                  const processedAdditionalData = processData(rawData);
+                  await set(ref(rtdb, `tenants/${configEmpresa.id}/tabelaGoogle_${i}`), processedAdditionalData);
                 }
               }
             } catch (e) {
@@ -505,6 +550,7 @@ export default function Empresas() {
       setConfigEmpresa(null);
       setSpreadsheetId('');
       setSelectedSheet('');
+      setMainSpreadsheetLabel('');
       setFullSheetData([]);
       setSheetNames([]);
       setAdditionalSpreadsheets([]);
@@ -567,7 +613,8 @@ export default function Empresas() {
     try {
       // Remove configuração do Firestore
       await setDoc(doc(firestore, 'tenants', configEmpresa.id), {
-        spreadsheetId: null
+        spreadsheetId: null,
+        mainSpreadsheetLabel: null
       }, { merge: true });
       
       // Remove dados do Realtime Database
@@ -576,6 +623,7 @@ export default function Empresas() {
       
       setSpreadsheetId('');
       setSelectedSheet('');
+      setMainSpreadsheetLabel('');
       setSheetData([]);
       setFullSheetData([]);
       setShowConfigModal(false);
@@ -948,6 +996,18 @@ export default function Empresas() {
               
               <div className="modal-body">
               <div>
+                <label className="form-label">Nome do Cenário (Principal)</label>
+                <input
+                  type="text"
+                  value={mainSpreadsheetLabel}
+                  onChange={(e) => setMainSpreadsheetLabel(e.target.value)}
+                  className="form-input w-full"
+                  placeholder="Ex: Principal, Base Oficial"
+                />
+                <p className="form-hint">Este nome identificará a planilha principal nos relatórios.</p>
+              </div>
+
+              <div className="mt-4">
                 <label className="form-label">ID da Planilha</label>
                 <div className="flex gap-2">
                   <input
@@ -1095,6 +1155,52 @@ export default function Empresas() {
                         }}
                         className="form-input w-full text-xs"
                       />
+                      {additionalData[index]?.sheetNames && (
+                        <select
+                          value={s.sheetName || ''}
+                          onChange={(e) => {
+                            const newList = [...additionalSpreadsheets];
+                            newList[index] = { ...newList[index], sheetName: e.target.value };
+                            setAdditionalSpreadsheets(newList);
+                            // Atualiza a visualização ao trocar de aba
+                            const sheet = additionalData[index].workbook.Sheets[e.target.value];
+                            const dataArrays = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true });
+                            setAdditionalData(prev => ({ ...prev, [index]: { ...prev[index], preview: dataArrays.slice(0, 5) } }));
+                          }}
+                          className="form-input w-full text-xs"
+                        >
+                          {additionalData[index].sheetNames.map(name => <option key={name} value={name}>{name}</option>)}
+                        </select>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => fetchAdditionalDataFromGoogle(s.spreadsheetId, index)}
+                        disabled={!s.spreadsheetId || loadingAdditionalPreview[index]}
+                        className="btn btn-secondary btn-sm w-full text-xs"
+                      >
+                        {loadingAdditionalPreview[index] ? 'Carregando...' : 'Visualizar Planilha Adicional'}
+                      </button>
+
+                      {additionalData[index]?.preview && (
+                        <div className="mt-2 rounded-lg overflow-hidden border border-[var(--border)]">
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs text-left">
+                              <thead style={{ background: 'var(--surface)', color: 'var(--text-muted)' }}>
+                                <tr>
+                                  {additionalData[index].preview[0]?.map((header, hIdx) => (
+                                    <th key={hIdx} className="px-2 py-1 font-medium whitespace-nowrap">{header}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                                {additionalData[index].preview.slice(1).map((row, rIdx) => (
+                                  <tr key={rIdx}>{row.map((cell, cIdx) => <td key={cIdx} className="px-2 py-1 whitespace-nowrap text-[11px]" style={{ color: 'var(--text-dim)' }}>{cell}</td>)}</tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}

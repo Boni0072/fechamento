@@ -467,8 +467,8 @@ export default function Dashboard() {
             <h3 style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.7px' }}>Progresso do Fechamento</h3>
             <button onClick={() => setExpandedChart('progresso')} style={{ color: 'var(--text-dim)' }} className="hover:opacity-80"><Maximize2 className="w-3.5 h-3.5" /></button>
           </div>
-          <div className="flex items-center justify-center gap-4 relative h-[280px]">
-            <div className="relative w-[280px] h-[280px] shrink-0">
+          <div className="flex flex-col md:flex-row items-center justify-center gap-4 relative h-auto md:h-[280px]">
+            <div className="relative w-full max-w-[280px] h-auto md:w-[280px] md:h-[280px] shrink-0">
               <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90" style={{ filter: 'drop-shadow(0 0 14px rgba(53,218,179,0.18))' }}>
                 <defs>
                   <linearGradient id="gradAtraso" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stopColor="#fb7169"/><stop offset="100%" stopColor="#f5b64d"/></linearGradient>
@@ -508,7 +508,7 @@ export default function Dashboard() {
                 <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1.2px' }}>Concluído</span>
               </div>
             </div>
-            <div className="flex flex-col gap-2 flex-1 max-w-[160px]">
+            <div className="flex flex-col gap-2 w-full md:flex-1 md:max-w-[160px] mt-4 md:mt-0">
               {chartData.map(item => (
                 <div key={item.key} onClick={() => setSelectedStatus(item.key)} className="flex items-center justify-between p-2 rounded-lg cursor-pointer transition-all" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
                   <div className="flex items-center gap-2">
