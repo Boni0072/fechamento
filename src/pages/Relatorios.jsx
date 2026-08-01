@@ -4,9 +4,10 @@ import { getDatabase, ref, onValue } from 'firebase/database';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { getStatusLabel } from '../services/database';
-import { FileText, Download, BarChart3, Users, AlertTriangle, Building2, Clock, CalendarDays, FileSpreadsheet, GripVertical, KeyRound, GitCompareArrows } from 'lucide-react';
+import { FileText, Download, BarChart3, Users, AlertTriangle, Building2, Clock, CalendarDays, FileSpreadsheet, GripVertical, KeyRound, GitCompareArrows, ChevronDown } from 'lucide-react';
 import { format } from 'date-fns';
 import { checkPermission } from './permissionUtils';
+import * as XLSX from 'xlsx';
 
 export default function Relatorios() {
   const { empresaAtual, empresas } = useAuth();
@@ -868,7 +869,15 @@ function TabelaDinamicaContainer({ empresaId }) {
   );
 }
 
+const PIVOT_ZONAS = [
+  { key: 'filtros', label: 'Filtros', icon: '▽' },
+  { key: 'colunas', label: 'Colunas', icon: '⑉' },
+  { key: 'linhas', label: 'Linhas', icon: '☰' },
+  { key: 'valores', label: 'Valores', icon: 'Σ' },
+];
+
 function TabelaConciliacao({ data1, data2, cols1, cols2 }) {
+  const [detalhadaCollapsed, setDetalhadaCollapsed] = useState(true);
   const { headers, conciliacaoData } = useMemo(() => {
     if (!data1.length || !data2.length || !data1[0]?.chave_dinamica || !data2[0]?.chave_dinamica) {
       return { headers: [], conciliacaoData: [] };
@@ -909,8 +918,23 @@ function TabelaConciliacao({ data1, data2, cols1, cols2 }) {
   return (
     <div>
       <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--text)' }}>Conciliação de Cenários</h2>
-      <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid var(--border)' }}>
-        <table className="w-full text-xs text-left">
+
+      <PivotBuilder headers={headers} conciliacaoData={conciliacaoData} data1={data1} data2={data2} />
+
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Comparação Detalhada</h3>
+        <button
+          type="button"
+          onClick={() => setDetalhadaCollapsed(prev => !prev)}
+          className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+        >
+          <ChevronDown className={`w-3 h-3 transition-transform ${detalhadaCollapsed ? '' : 'rotate-180'}`} />
+          {detalhadaCollapsed ? 'Mostrar detalhes' : 'Recolher detalhes'}
+        </button>
+      </div>
+      {!detalhadaCollapsed && (
+        <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid var(--border)' }}>
+          <table className="w-full text-xs text-left">
           <thead style={{ background: 'var(--surface-2)', color: 'var(--text-muted)' }}>
             <tr>
               <th className="px-3 py-2 font-medium sticky left-0 bg-[var(--surface-2)] z-10">Chave</th>
@@ -933,6 +957,423 @@ function TabelaConciliacao({ data1, data2, cols1, cols2 }) {
             ))}
           </tbody>
         </table>
+      </div>
+      )}
+    </div>
+  );
+}
+
+// Monta a tabela dinâmica (estilo Excel: Filtros / Colunas / Linhas / Valores) a partir
+// dos dados já calculados da Conciliação de Cenários, e permite exportar o resultado
+// (ou a base completa) para um arquivo .xlsx.
+function PivotBuilder({ headers, conciliacaoData, data1 = [], data2 = [] }) {
+  const campos = useMemo(() => {
+    const base = [
+      { key: 'chave_dinamica', label: 'Chave' },
+      { key: 'status', label: 'Status' },
+      { key: 'cenario', label: 'Cenário' },
+    ];
+    headers.forEach(h => {
+      base.push({ key: `${h}_1`, label: `${h} (Cenário 1)` });
+      base.push({ key: `${h}_2`, label: `${h} (Cenário 2)` });
+      base.push({ key: `${h}_diff`, label: `${h} (Diferença)` });
+    });
+    return base;
+  }, [headers]);
+
+  const [zonas, setZonas] = useState({ filtros: [], colunas: [], linhas: ['status'], valores: [] });
+  const [filtroValores, setFiltroValores] = useState({});
+  const [draggedField, setDraggedField] = useState(null);
+
+  const camposUsados = new Set([...zonas.filtros, ...zonas.colunas, ...zonas.linhas, ...zonas.valores]);
+  const camposDisponiveis = campos.filter(c => !camposUsados.has(c.key));
+  const labelDoCampo = (key) => campos.find(c => c.key === key)?.label || key;
+
+  const moverCampo = (fieldKey, zonaDestino) => {
+    setZonas(prev => {
+      const novo = {
+        filtros: prev.filtros.filter(k => k !== fieldKey),
+        colunas: prev.colunas.filter(k => k !== fieldKey),
+        linhas: prev.linhas.filter(k => k !== fieldKey),
+        valores: prev.valores.filter(k => k !== fieldKey),
+      };
+      if (zonaDestino) novo[zonaDestino] = [...novo[zonaDestino], fieldKey];
+      return novo;
+    });
+  };
+
+  const removerCampo = (fieldKey) => moverCampo(fieldKey, null);
+
+  const handleDragStartCampo = (e, fieldKey) => {
+    setDraggedField(fieldKey);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+  const handleDragOverZona = (e) => e.preventDefault();
+  const handleDropZona = (e, zonaKey) => {
+    e.preventDefault();
+    if (draggedField) moverCampo(draggedField, zonaKey);
+    setDraggedField(null);
+  };
+  const handleDropDisponiveis = (e) => {
+    e.preventDefault();
+    if (draggedField) removerCampo(draggedField);
+    setDraggedField(null);
+  };
+
+  // Valores distintos de cada campo usado como filtro
+  const opcoesFiltro = useMemo(() => {
+    const mapa = {};
+    zonas.filtros.forEach(f => {
+      mapa[f] = Array.from(new Set(conciliacaoData.map(r => String(r[f] ?? '')))).sort();
+    });
+    return mapa;
+  }, [zonas.filtros, conciliacaoData]);
+
+  const dadosFiltrados = useMemo(() => {
+    return conciliacaoData.filter(row => {
+      return zonas.filtros.every(f => {
+        const selecionado = filtroValores[f];
+        if (!selecionado || selecionado === 'Todos') return true;
+        return String(row[f] ?? '') === selecionado;
+      });
+    });
+  }, [conciliacaoData, zonas.filtros, filtroValores]);
+
+  const pivot = useMemo(() => {
+    const temLinhas = zonas.linhas.length > 0;
+    const temColunas = zonas.colunas.length > 0;
+    if (!temLinhas && !temColunas) return null;
+
+    // Maps das fontes originais (cenários) para identificar presença e nomes
+    const map1 = new Map((data1 || []).map(row => [row.chave_dinamica, row]));
+    const map2 = new Map((data2 || []).map(row => [row.chave_dinamica, row]));
+
+    const chaveDe = (row, campos) => campos.length ? campos.map(c => String(row[c] ?? '(vazio)')).join(' | ') : '(Total)';
+    const medidas = zonas.valores.length ? zonas.valores : ['__registros__'];
+
+    const linhasSet = new Set();
+    const colunasSet = new Set();
+    const celulas = new Map(); // `${rk}__${ck}__${medida}` -> soma
+
+    // Quando a única coluna selecionada for 'cenario', distribuímos por nomes de cenário
+    const singleColIsCenario = zonas.colunas.length === 1 && zonas.colunas[0] === 'cenario';
+
+    if (singleColIsCenario) {
+      const scenarioNames = Array.from(new Set([...(data1 || []).map(r => r.cenario), ...(data2 || []).map(r => r.cenario)])).sort((a, b) => String(a).localeCompare(String(b), 'pt-BR', { sensitivity: 'base' }));
+      // preenche conjuntos de linhas/colunas e células contando presença por cenário
+      dadosFiltrados.forEach(row => {
+        const rk = chaveDe(row, zonas.linhas);
+        linhasSet.add(rk);
+        const key = row.chave_dinamica;
+        scenarioNames.forEach(sName => colunasSet.add(sName));
+        medidas.forEach(m => {
+          scenarioNames.forEach(sName => {
+            const chaveCelula = `${rk}__${sName}__${m}`;
+            const atual = celulas.get(chaveCelula) || 0;
+            // presença no cenário 1
+            const present1 = map1.has(key) && String(map1.get(key).cenario) === String(sName);
+            const present2 = map2.has(key) && String(map2.get(key).cenario) === String(sName);
+            if (m === '__registros__') {
+              celulas.set(chaveCelula, atual + (present1 ? 1 : 0) + (present2 ? 1 : 0));
+            } else {
+              // se a medida é do tipo field_1 ou field_2, só conta quando fonte existir
+              if (String(m).endsWith('_1')) {
+                if (present1) {
+                  const val = row[m];
+                  const numeric = Number(val);
+                  celulas.set(chaveCelula, atual + (Number.isFinite(numeric) ? numeric : (val ? 1 : 0)));
+                } else {
+                  celulas.set(chaveCelula, atual + 0);
+                }
+              } else if (String(m).endsWith('_2')) {
+                if (present2) {
+                  const val = row[m];
+                  const numeric = Number(val);
+                  celulas.set(chaveCelula, atual + (Number.isFinite(numeric) ? numeric : (val ? 1 : 0)));
+                } else {
+                  celulas.set(chaveCelula, atual + 0);
+                }
+              } else {
+                // fallback: conta presença
+                celulas.set(chaveCelula, atual + (present1 || present2 ? 1 : 0));
+              }
+            }
+          });
+        });
+      });
+
+      return {
+        linhasKeys: Array.from(linhasSet).sort(),
+        colunasKeys: Array.from(colunasSet).sort((a, b) => String(a).localeCompare(String(b), 'pt-BR', { sensitivity: 'base' })),
+        medidas,
+        celulas,
+        colFieldValues: Array.from(new Set([...(data1 || []).map(r => r.cenario), ...(data2 || []).map(r => r.cenario)])).sort((a, b) => String(a).localeCompare(String(b), 'pt-BR', { sensitivity: 'base' })),
+      };
+    }
+
+    // Comportamento padrão (ou múltiplas colunas)
+    dadosFiltrados.forEach(row => {
+      const rk = chaveDe(row, zonas.linhas);
+      const ck = chaveDe(row, zonas.colunas);
+      linhasSet.add(rk);
+      colunasSet.add(ck);
+      medidas.forEach(m => {
+        const chaveCelula = `${rk}__${ck}__${m}`;
+        const atual = celulas.get(chaveCelula) || 0;
+        if (m === '__registros__') {
+          celulas.set(chaveCelula, atual + 1);
+        } else {
+          const val = row[m];
+          const preenchido = val !== undefined && val !== null && String(val).trim() !== '' && val !== false;
+          celulas.set(chaveCelula, atual + (preenchido ? 1 : 0));
+        }
+      });
+    });
+
+    return {
+      linhasKeys: Array.from(linhasSet).sort(),
+      colunasKeys: Array.from(colunasSet).sort(),
+      medidas,
+      celulas,
+      // Quando há apenas um campo em colunas, também exponha os valores únicos desse campo
+      colFieldValues: zonas.colunas.length === 1 ? Array.from(colunasSet).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })) : null,
+    };
+  }, [dadosFiltrados, zonas.linhas, zonas.colunas, zonas.valores]);
+
+  const labelMedida = (m) => m === '__registros__' ? 'Contagem de Registros' : `Contagem de ${labelDoCampo(m)}`;
+
+  const exportarExcel = () => {
+    const wb = XLSX.utils.book_new();
+
+    if (pivot) {
+      const linhaCabecalho1 = [zonas.linhas.length ? zonas.linhas.map(labelDoCampo).join(' / ') : ''];
+      const linhaCabecalho2 = [''];
+      pivot.colunasKeys.forEach(ck => {
+        pivot.medidas.forEach((m, i) => {
+          linhaCabecalho1.push(i === 0 ? ck : '');
+          linhaCabecalho2.push(labelMedida(m));
+        });
+      });
+
+      const linhasDados = pivot.linhasKeys.map(rk => {
+        const linha = [rk];
+        pivot.colunasKeys.forEach(ck => {
+          pivot.medidas.forEach(m => {
+            linha.push(pivot.celulas.get(`${rk}__${ck}__${m}`) || 0);
+          });
+        });
+        return linha;
+      });
+
+      const aoa = pivot.colunasKeys.length > 1 || pivot.medidas.length > 1
+        ? [linhaCabecalho1, linhaCabecalho2, ...linhasDados]
+        : [['', ...pivot.colunasKeys], ...pivot.linhasKeys.map(rk => [rk, ...pivot.colunasKeys.map(ck => pivot.celulas.get(`${rk}__${ck}__${pivot.medidas[0]}`) || 0)])];
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      XLSX.utils.book_append_sheet(wb, ws, 'Tabela Dinâmica');
+    }
+
+    // Base detalhada sempre incluída, filtrada conforme os Filtros selecionados
+    const colunasBase = ['chave_dinamica', 'status', ...campos.filter(c => c.key !== 'chave_dinamica' && c.key !== 'status').map(c => c.key)];
+    const aoaBase = [
+      colunasBase.map(labelDoCampo),
+      ...dadosFiltrados.map(row => colunasBase.map(c => (typeof row[c] === 'boolean' ? (row[c] ? 'Sim' : 'Não') : (row[c] ?? ''))))
+    ];
+    const wsBase = XLSX.utils.aoa_to_sheet(aoaBase);
+    XLSX.utils.book_append_sheet(wb, wsBase, 'Base Detalhada');
+
+    XLSX.writeFile(wb, `conciliacao_cenarios_${format(new Date(), 'yyyyMMdd_HHmm')}.xlsx`);
+  };
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-col gap-3 p-3 border-b border-slate-200 bg-slate-50 md:flex-row md:items-center md:justify-between">
+        <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+          <FileSpreadsheet className="w-4 h-4" />
+          Montar Tabela Dinâmica
+        </div>
+        <button type="button" onClick={exportarExcel} className="btn btn-secondary inline-flex items-center gap-2">
+          <Download className="w-4 h-4" />
+          Exportar para Excel
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-[360px_1fr]">
+        <div className="space-y-4">
+          <section className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Campos disponíveis</p>
+                <p className="text-[11px] text-slate-500">Arraste os campos para as zonas abaixo.</p>
+              </div>
+              <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600">{camposDisponiveis.length}</span>
+            </div>
+            <div className="max-h-[240px] space-y-2 overflow-y-auto pr-1">
+              {camposDisponiveis.map(c => (
+                <div
+                  key={c.key}
+                  draggable
+                  onDragStart={(e) => handleDragStartCampo(e, c.key)}
+                  className="flex cursor-move items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 shadow-sm"
+                >
+                  <GripVertical className="w-3 h-3 text-slate-400" />
+                  {c.label}
+                </div>
+              ))}
+              {camposDisponiveis.length === 0 && (
+                <p className="text-xs text-slate-500">Todos os campos foram alocados.</p>
+              )}
+            </div>
+          </section>
+
+          <section className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Configuração</p>
+                <p className="text-[11px] text-slate-500">Filtros, Colunas, Linhas e Valores compactados para visualização.</p>
+              </div>
+              <span className="text-[11px] text-slate-500">{campos.length} campos</span>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {PIVOT_ZONAS.map(zona => (
+                <div
+                  key={zona.key}
+                  onDragOver={handleDragOverZona}
+                  onDrop={(e) => handleDropZona(e, zona.key)}
+                  className="rounded-3xl border border-dashed border-slate-200 bg-white p-3"
+                >
+                  <p className="text-xs font-semibold mb-3 flex items-center gap-2 text-slate-700">
+                    <span>{zona.icon}</span>
+                    {zona.label}
+                  </p>
+                  <div className="space-y-2">
+                    {zonas[zona.key].map(fieldKey => (
+                      <div
+                        key={fieldKey}
+                        draggable
+                        onDragStart={(e) => handleDragStartCampo(e, fieldKey)}
+                        className="flex items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-slate-100 px-3 py-2 text-xs text-slate-800"
+                      >
+                        <span className="flex items-center gap-2 truncate">
+                          <GripVertical className="w-3 h-3 text-slate-400" />
+                          {labelDoCampo(fieldKey)}
+                        </span>
+                        <button type="button" onClick={() => removerCampo(fieldKey)} className="text-xs font-semibold text-slate-500 hover:text-slate-700">✕</button>
+                      </div>
+                    ))}
+                    {zonas[zona.key].length === 0 && (
+                      <p className="text-xs text-slate-500">Arraste um campo aqui</p>
+                    )}
+                  </div>
+                  {zona.key === 'filtros' && zonas.filtros.length > 0 && (
+                    <div className="mt-3 space-y-3">
+                      {zonas.filtros.map(f => (
+                        <div key={f}>
+                          <label className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{labelDoCampo(f)}</label>
+                          <select
+                            className="form-input mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900"
+                            value={filtroValores[f] || 'Todos'}
+                            onChange={(e) => setFiltroValores(prev => ({ ...prev, [f]: e.target.value }))}
+                          >
+                            <option value="Todos">Todos</option>
+                            {(opcoesFiltro[f] || []).map(v => (
+                              <option key={v} value={v}>{v}</option>
+                            ))}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        <div className="space-y-4">
+          <section className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Resultado da Tabela Dinâmica</p>
+                <p className="text-xs text-slate-500">A visualização é atualizada automaticamente.</p>
+              </div>
+              <div className="text-xs text-slate-500">
+                {pivot ? `${pivot.linhasKeys.length} linhas · ${pivot.colunasKeys.length} colunas` : 'Sem campos suficientes'}
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-3xl border border-slate-200 bg-white p-4">
+            {!pivot ? (
+              <p className="text-xs text-center py-10 text-slate-500">
+                Arraste ao menos um campo para <strong>Linhas</strong> ou <strong>Colunas</strong> para montar a tabela.
+              </p>
+            ) : (
+              <div className="overflow-x-auto rounded-3xl border border-slate-200">
+                <table className="min-w-full text-xs text-left">
+                  <thead className="bg-slate-50 text-slate-600">
+                    {/** Cabeçalho agrupado quando houver apenas um campo em colunas */}
+                    {pivot.colFieldValues && zonas.colunas.length === 1 ? (
+                      <>
+                        <tr>
+                          <th className="px-3 py-2 sticky left-0 bg-slate-50 z-10 text-slate-800">{zonas.linhas.length ? zonas.linhas.map(labelDoCampo).join(' / ') : ''}</th>
+                          <th className="px-3 py-2 text-center font-semibold border-l border-slate-200" colSpan={pivot.colFieldValues.length * pivot.medidas.length}>
+                            {labelDoCampo(zonas.colunas[0])}
+                          </th>
+                        </tr>
+                        <tr>
+                          <th className="px-3 py-2 sticky left-0 bg-slate-50 z-10"></th>
+                          {pivot.colFieldValues.map(val => (
+                            <th key={val} colSpan={pivot.medidas.length} className="px-3 py-2 text-center font-semibold border-l border-slate-200">{val}</th>
+                          ))}
+                        </tr>
+                        {pivot.medidas.length > 1 && (
+                          <tr>
+                            <th className="px-3 py-2 sticky left-0 bg-slate-50 z-10"></th>
+                            {pivot.colFieldValues.map(val => pivot.medidas.map(m => (
+                              <th key={`${val}-${m}`} className="px-3 py-2 text-slate-600 border-l border-slate-200">{labelMedida(m)}</th>
+                            )))}
+                          </tr>
+                        )}
+                      </>
+                    ) : (
+                      <> 
+                        <tr>
+                          <th className="px-3 py-2 sticky left-0 bg-slate-50 z-10 text-slate-800">{zonas.linhas.length ? zonas.linhas.map(labelDoCampo).join(' / ') : ''}</th>
+                          {pivot.colunasKeys.map(ck => (
+                            <th key={ck} colSpan={pivot.medidas.length} className="px-3 py-2 text-center font-semibold border-l border-slate-200">
+                              {ck}
+                            </th>
+                          ))}
+                        </tr>
+                        {pivot.medidas.length > 1 && (
+                          <tr>
+                            <th className="px-3 py-2 sticky left-0 bg-slate-50 z-10"></th>
+                            {pivot.colunasKeys.map(ck => pivot.medidas.map(m => (
+                              <th key={`${ck}-${m}`} className="px-3 py-2 text-slate-600 border-l border-slate-200">{labelMedida(m)}</th>
+                            )))}
+                          </tr>
+                        )}
+                      </>
+                    )}
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {pivot.linhasKeys.map(rk => (
+                      <tr key={rk} className="hover:bg-slate-50">
+                        <td className="px-3 py-2 whitespace-nowrap sticky left-0 bg-white font-medium text-slate-800">{rk}</td>
+                        {pivot.colunasKeys.map(ck => pivot.medidas.map(m => (
+                          <td key={`${ck}-${m}`} className="px-3 py-2 text-right border-l border-slate-200 text-slate-700">
+                            {pivot.celulas.get(`${rk}__${ck}__${m}`) || 0}
+                          </td>
+                        )))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </div>
       </div>
     </div>
   );
@@ -1068,13 +1509,11 @@ function TabelaDinamicaComponent({ empresaId, onDataChange, onColsChange, instan
 
   useEffect(() => {
     // Se a chave dinâmica for incluída, adicione-a aos cabeçalhos e colunas selecionadas
-    if (dynamicKeyIncluded && !headers.includes('chave_dinamica')) {
-      setHeaders(prev => [...prev, 'chave_dinamica']);
-      if (!selectedCols.includes('chave_dinamica')) {
-        setSelectedCols(prev => ['chave_dinamica', ...prev]);
-      }
+    if (dynamicKeyIncluded) {
+      setHeaders(prev => Array.from(new Set([...prev, 'chave_dinamica'])));
+      setSelectedCols(prev => Array.from(new Set(['chave_dinamica', ...prev])));
     }
-  }, [dynamicKeyIncluded, headers, selectedCols]);
+  }, [dynamicKeyIncluded]);
 
   const processedData = useMemo(() => {
     if (!keyTemplate) return dadosCenario.map(row => ({ ...row, chave_dinamica: '' }));
@@ -1189,7 +1628,7 @@ function TabelaDinamicaComponent({ empresaId, onDataChange, onColsChange, instan
       <div className="mb-4">
         <p className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Colunas visíveis:</p>
         <div className="flex flex-wrap gap-1">
-          {['chave_dinamica', ...headers].sort().map(col => (
+          {Array.from(new Set(['chave_dinamica', ...headers])).sort().map(col => (
             <button
               key={col}
               onClick={() => toggleColumn(col)}
