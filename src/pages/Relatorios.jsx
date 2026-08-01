@@ -886,29 +886,24 @@ function TabelaConciliacao({ data1, data2, cols1, cols2 }) {
     const map1 = new Map(data1.map(row => [row.chave_dinamica, row]));
     const map2 = new Map(data2.map(row => [row.chave_dinamica, row]));
     const allKeys = new Set([...map1.keys(), ...map2.keys()]);
-    const commonCols = new Set([...cols1, ...cols2].filter(c => c !== 'chave_dinamica' && c !== 'cenario'));
+    const allHeaders = new Set([...cols1, ...cols2]);
 
     const result = [];
     allKeys.forEach(key => {
       const row1 = map1.get(key);
       const row2 = map2.get(key);
       let status = '';
-      if (row1 && row2) status = 'Encontrado em ambos';
-      else if (row1) status = 'Apenas no Cenário 1';
-      else if (row2) status = 'Apenas no Cenário 2';
+      if (row1 && row2) status = 'Encontrado em ambos'; // Found in both
+      else if (row1) status = 'Apenas no Cenário 1'; // Only in Scenario 1
+      else if (row2) status = 'Apenas no Cenário 2'; // Only in Scenario 2
 
-      const rowData = { chave_dinamica: key, status };
-      commonCols.forEach(col => {
-        const val1 = row1?.[col] ?? '';
-        const val2 = row2?.[col] ?? '';
-        rowData[`${col}_1`] = val1;
-        rowData[`${col}_2`] = val2;
-        rowData[`${col}_diff`] = val1 !== val2;
-      });
-      result.push(rowData);
+      // Adiciona a linha do cenário 1 se existir
+      if (row1) result.push({ ...row1, chave_dinamica: key, status, cenario: 'Cenário 1' });
+      // Adiciona a linha do cenário 2 se existir
+      if (row2) result.push({ ...row2, chave_dinamica: key, status, cenario: 'Cenário 2' });
     });
 
-    return { headers: Array.from(commonCols), conciliacaoData: result };
+    return { headers: Array.from(allHeaders), conciliacaoData: result };
   }, [data1, data2, cols1, cols2]);
 
   if (!conciliacaoData.length) {
@@ -973,15 +968,14 @@ function PivotBuilder({ headers, conciliacaoData, data1 = [], data2 = [] }) {
       { key: 'status', label: 'Status' },
       { key: 'cenario', label: 'Cenário' },
     ];
-    headers.forEach(h => {
-      base.push({ key: `${h}_1`, label: `${h} (Cenário 1)` });
-      base.push({ key: `${h}_2`, label: `${h} (Cenário 2)` });
-      base.push({ key: `${h}_diff`, label: `${h} (Diferença)` });
-    });
-    return base;
-  }, [headers]);
+    // Unifica os cabeçalhos, removendo duplicatas e campos internos
+    const colunasUnicas = Array.from(new Set(headers.filter(h => h !== 'chave_dinamica' && h !== 'status' && h !== 'cenario')));
+    colunasUnicas.forEach(h => base.push({ key: h, label: h }));
+    return base.sort((a, b) => a.label.localeCompare(b.label));
+  }, [headers, conciliacaoData]);
 
   const [zonas, setZonas] = useState({ filtros: [], colunas: [], linhas: ['status'], valores: [] });
+  const [tableCollapsed, setTableCollapsed] = useState(false);
   const [filtroValores, setFiltroValores] = useState({});
   const [draggedField, setDraggedField] = useState(null);
 
@@ -1074,7 +1068,12 @@ function PivotBuilder({ headers, conciliacaoData, data1 = [], data2 = [] }) {
             const present1 = map1.has(key) && String(map1.get(key).cenario) === String(sName);
             const present2 = map2.has(key) && String(map2.get(key).cenario) === String(sName);
             if (m === '__registros__') {
-              celulas.set(chaveCelula, atual + (present1 ? 1 : 0) + (present2 ? 1 : 0));
+              // Correção: A contagem de registros deve somar as presenças, não apenas contar 1.
+              // Se a chave existe no cenário 1, soma 1. Se existe no 2, soma 1.
+              // Isso é diferente da lógica de célula, que é apenas `presente ? 1 : 0`.
+              const v1 = map1.has(key) && String(map1.get(key).cenario) === sName ? 1 : 0;
+              const v2 = map2.has(key) && String(map2.get(key).cenario) === sName ? 1 : 0;
+              celulas.set(chaveCelula, atual + v1 + v2);
             } else {
               // se a medida é do tipo field_1 ou field_2, só conta quando fonte existir
               if (String(m).endsWith('_1')) {
@@ -1102,12 +1101,35 @@ function PivotBuilder({ headers, conciliacaoData, data1 = [], data2 = [] }) {
         });
       });
 
+      // calcular totais por linha, coluna e gerais
+      const rowTotals = new Map(); // rk -> { medida -> total }
+      const colTotals = new Map(); // ck -> { medida -> total }
+      const grandTotals = {}; // medida -> total
+
+      // Itera sobre as linhas e colunas para calcular os totais
+      for (const rk of linhasSet) {
+        for (const ck of colunasSet) {
+          for (const m of medidas) {
+            const cellKey = `${rk}__${ck}__${m}`;
+            const num = Number(celulas.get(cellKey) || 0);
+            if (!rowTotals.has(rk)) rowTotals.set(rk, {});
+            rowTotals.get(rk)[m] = (rowTotals.get(rk)[m] || 0) + num;
+            if (!colTotals.has(ck)) colTotals.set(ck, {});
+            colTotals.get(ck)[m] = (colTotals.get(ck)[m] || 0) + num;
+            grandTotals[m] = (grandTotals[m] || 0) + num;
+          }
+        }
+      }
+
       return {
         linhasKeys: Array.from(linhasSet).sort(),
         colunasKeys: Array.from(colunasSet).sort((a, b) => String(a).localeCompare(String(b), 'pt-BR', { sensitivity: 'base' })),
         medidas,
         celulas,
         colFieldValues: Array.from(new Set([...(data1 || []).map(r => r.cenario), ...(data2 || []).map(r => r.cenario)])).sort((a, b) => String(a).localeCompare(String(b), 'pt-BR', { sensitivity: 'base' })),
+        rowTotals,
+        colTotals,
+        grandTotals,
       };
     }
 
@@ -1130,6 +1152,26 @@ function PivotBuilder({ headers, conciliacaoData, data1 = [], data2 = [] }) {
       });
     });
 
+    // calcular totais por linha, coluna e gerais
+    const rowTotals = new Map(); // rk -> { medida -> total }
+    const colTotals = new Map(); // ck -> { medida -> total }
+    const grandTotals = {}; // medida -> total
+
+    // Itera sobre as linhas e colunas para calcular os totais
+    for (const rk of linhasSet) {
+      for (const ck of colunasSet) {
+        for (const m of medidas) {
+          const cellKey = `${rk}__${ck}__${m}`;
+          const num = Number(celulas.get(cellKey) || 0);
+          if (!rowTotals.has(rk)) rowTotals.set(rk, {});
+          rowTotals.get(rk)[m] = (rowTotals.get(rk)[m] || 0) + num;
+          if (!colTotals.has(ck)) colTotals.set(ck, {});
+          colTotals.get(ck)[m] = (colTotals.get(ck)[m] || 0) + num;
+          grandTotals[m] = (grandTotals[m] || 0) + num;
+        }
+      }
+    }
+
     return {
       linhasKeys: Array.from(linhasSet).sort(),
       colunasKeys: Array.from(colunasSet).sort(),
@@ -1137,6 +1179,9 @@ function PivotBuilder({ headers, conciliacaoData, data1 = [], data2 = [] }) {
       celulas,
       // Quando há apenas um campo em colunas, também exponha os valores únicos desse campo
       colFieldValues: zonas.colunas.length === 1 ? Array.from(colunasSet).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })) : null,
+      rowTotals,
+      colTotals,
+      grandTotals,
     };
   }, [dadosFiltrados, zonas.linhas, zonas.colunas, zonas.valores]);
 
@@ -1185,6 +1230,14 @@ function PivotBuilder({ headers, conciliacaoData, data1 = [], data2 = [] }) {
     XLSX.writeFile(wb, `conciliacao_cenarios_${format(new Date(), 'yyyyMMdd_HHmm')}.xlsx`);
   };
 
+  const formatNumber = (v) => {
+    if (v === undefined || v === null || v === '') return '';
+    const n = Number(v);
+    return Number.isFinite(n) ? n.toLocaleString('pt-BR') : String(v);
+  };
+
+  const displayColKeys = pivot ? (pivot.colFieldValues || pivot.colunasKeys) : [];
+
   return (
     <div className="rounded-lg border border-slate-200 bg-white shadow-sm">
       <div className="flex flex-col gap-3 p-3 border-b border-slate-200 bg-slate-50 md:flex-row md:items-center md:justify-between">
@@ -1192,10 +1245,15 @@ function PivotBuilder({ headers, conciliacaoData, data1 = [], data2 = [] }) {
           <FileSpreadsheet className="w-4 h-4" />
           Montar Tabela Dinâmica
         </div>
-        <button type="button" onClick={exportarExcel} className="btn btn-secondary inline-flex items-center gap-2">
-          <Download className="w-4 h-4" />
-          Exportar para Excel
-        </button>
+          <div className="flex items-center gap-2">
+          <button type="button" onClick={() => setTableCollapsed(p => !p)} className="btn btn-ghost">
+            {tableCollapsed ? 'Mostrar Tabela' : 'Recolher Tabela'}
+          </button>
+          <button type="button" onClick={exportarExcel} className="btn btn-secondary inline-flex items-center gap-2">
+            <Download className="w-4 h-4" />
+            Exportar para Excel
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-[360px_1fr]">
@@ -1298,7 +1356,7 @@ function PivotBuilder({ headers, conciliacaoData, data1 = [], data2 = [] }) {
                 <p className="text-xs text-slate-500">A visualização é atualizada automaticamente.</p>
               </div>
               <div className="text-xs text-slate-500">
-                {pivot ? `${pivot.linhasKeys.length} linhas · ${pivot.colunasKeys.length} colunas` : 'Sem campos suficientes'}
+                {pivot ? `${pivot.linhasKeys.length} linhas · ${displayColKeys.length} colunas` : 'Sem campos suficientes'}
               </div>
             </div>
           </section>
@@ -1317,15 +1375,15 @@ function PivotBuilder({ headers, conciliacaoData, data1 = [], data2 = [] }) {
                       <>
                         <tr>
                           <th className="px-3 py-2 sticky left-0 bg-slate-50 z-10 text-slate-800">{zonas.linhas.length ? zonas.linhas.map(labelDoCampo).join(' / ') : ''}</th>
-                          <th className="px-3 py-2 text-center font-semibold border-l border-slate-200" colSpan={pivot.colFieldValues.length * pivot.medidas.length}>
-                            {labelDoCampo(zonas.colunas[0])}
-                          </th>
+                          <th className="px-3 py-2 text-center font-semibold border-l border-slate-200" colSpan={pivot.colFieldValues.length * pivot.medidas.length}>{labelDoCampo(zonas.colunas[0])}</th>
+                          <th className="px-3 py-2 text-center font-semibold border-l border-slate-200" colSpan={pivot.medidas.length}>Total</th>
                         </tr>
                         <tr>
                           <th className="px-3 py-2 sticky left-0 bg-slate-50 z-10"></th>
                           {pivot.colFieldValues.map(val => (
                             <th key={val} colSpan={pivot.medidas.length} className="px-3 py-2 text-center font-semibold border-l border-slate-200">{val}</th>
                           ))}
+                          <th className="px-3 py-2 text-center font-semibold border-l border-slate-200">Total</th>
                         </tr>
                         {pivot.medidas.length > 1 && (
                           <tr>
@@ -1333,6 +1391,9 @@ function PivotBuilder({ headers, conciliacaoData, data1 = [], data2 = [] }) {
                             {pivot.colFieldValues.map(val => pivot.medidas.map(m => (
                               <th key={`${val}-${m}`} className="px-3 py-2 text-slate-600 border-l border-slate-200">{labelMedida(m)}</th>
                             )))}
+                            {pivot.medidas.map(m => (
+                              <th key={`total-${m}`} className="px-3 py-2 text-slate-600 border-l border-slate-200">{labelMedida(m)}</th>
+                            ))}
                           </tr>
                         )}
                       </>
@@ -1340,35 +1401,65 @@ function PivotBuilder({ headers, conciliacaoData, data1 = [], data2 = [] }) {
                       <> 
                         <tr>
                           <th className="px-3 py-2 sticky left-0 bg-slate-50 z-10 text-slate-800">{zonas.linhas.length ? zonas.linhas.map(labelDoCampo).join(' / ') : ''}</th>
-                          {pivot.colunasKeys.map(ck => (
-                            <th key={ck} colSpan={pivot.medidas.length} className="px-3 py-2 text-center font-semibold border-l border-slate-200">
-                              {ck}
-                            </th>
+                          {displayColKeys.map(ck => (
+                            <th key={ck} colSpan={pivot.medidas.length} className="px-3 py-2 text-center font-semibold border-l border-slate-200">{ck}</th>
                           ))}
+                          <th className="px-3 py-2 text-center font-semibold border-l border-slate-200" colSpan={pivot.medidas.length}>Total</th>
                         </tr>
                         {pivot.medidas.length > 1 && (
                           <tr>
                             <th className="px-3 py-2 sticky left-0 bg-slate-50 z-10"></th>
-                            {pivot.colunasKeys.map(ck => pivot.medidas.map(m => (
+                            {displayColKeys.map(ck => pivot.medidas.map(m => (
                               <th key={`${ck}-${m}`} className="px-3 py-2 text-slate-600 border-l border-slate-200">{labelMedida(m)}</th>
                             )))}
+                            {pivot.medidas.map(m => (
+                              <th key={`total-${m}`} className="px-3 py-2 text-slate-600 border-l border-slate-200">{labelMedida(m)}</th>
+                            ))}
                           </tr>
                         )}
                       </>
                     )}
                   </thead>
-                  <tbody className="divide-y divide-slate-200">
-                    {pivot.linhasKeys.map(rk => (
-                      <tr key={rk} className="hover:bg-slate-50">
-                        <td className="px-3 py-2 whitespace-nowrap sticky left-0 bg-white font-medium text-slate-800">{rk}</td>
-                        {pivot.colunasKeys.map(ck => pivot.medidas.map(m => (
-                          <td key={`${ck}-${m}`} className="px-3 py-2 text-right border-l border-slate-200 text-slate-700">
-                            {pivot.celulas.get(`${rk}__${ck}__${m}`) || 0}
-                          </td>
-                        )))}
-                      </tr>
-                    ))}
-                  </tbody>
+                  { !tableCollapsed ? (
+                    <tbody className="divide-y divide-slate-200">
+                      {pivot.linhasKeys.map(rk => (
+                        <tr key={rk} className="hover:bg-slate-50 odd:bg-white even:bg-slate-50">
+                          <td className="px-3 py-2 whitespace-nowrap sticky left-0 bg-white font-medium text-slate-800">{rk}</td>
+                          {displayColKeys.map(ck => pivot.medidas.map(m => (
+                            <td key={`${ck}-${m}`} className="px-3 py-2 text-right border-l border-slate-200 text-slate-700">{formatNumber(pivot.celulas.get(`${rk}__${ck}__${m}`) || 0)}</td>
+                          )))}
+                          {pivot.medidas.map(m => (
+                            <td key={`rowtotal-${rk}-${m}`} className="px-3 py-2 text-right border-l border-slate-200 font-semibold text-slate-800">{formatNumber((pivot.rowTotals.get(rk) || {})[m] || 0)}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  ) : (
+                    <tbody className="divide-y divide-slate-200">
+                      {pivot.medidas.map(m => (
+                        <tr key={`collapsed-total-${m}`} className="bg-slate-50 font-semibold">
+                          <td className="px-3 py-2 sticky left-0 bg-slate-50 z-10">Total - {labelMedida(m)}</td>
+                          {displayColKeys.map(ck => (
+                            <td key={`collapsed-coltot-${ck}-${m}`} className="px-3 py-2 text-right border-l border-slate-200">{formatNumber(((pivot.colTotals.get(ck) || {})[m]) || 0)}</td>
+                          ))}
+                          <td className="px-3 py-2 text-right border-l border-slate-200">{formatNumber(pivot.grandTotals[m] || 0)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  )}
+                  {!tableCollapsed && (
+                    <tfoot className="bg-slate-50 text-slate-700">
+                      {pivot.medidas.map(m => (
+                        <tr key={`tfoot-${m}`} className="font-semibold">
+                          <td className="px-3 py-2 sticky left-0 bg-slate-50 z-10">Total - {labelMedida(m)}</td>
+                          {displayColKeys.map(ck => (
+                            <td key={`coltot-${ck}-${m}`} className="px-3 py-2 text-right border-l border-slate-200">{formatNumber(((pivot.colTotals.get(ck) || {})[m]) || 0)}</td>
+                          ))}
+                          <td className="px-3 py-2 text-right border-l border-slate-200">{formatNumber(pivot.grandTotals[m] || 0)}</td>
+                        </tr>
+                      ))}
+                    </tfoot>
+                  )}
                 </table>
               </div>
             )}
@@ -1415,41 +1506,50 @@ function TabelaDinamicaComponent({ empresaId, onDataChange, onColsChange, instan
         });
         setCenarios(cenariosDisponiveis);
 
-        const allRows = [];
+        const allRowsByKey = new Map();
         const allHeaders = new Set();
 
         // Add main data with "Principal" cenario
         const mainArray = Array.isArray(mainData) ? mainData : Object.values(mainData);
         mainArray.forEach(row => {
           if (typeof row === 'object' && row !== null) {
-            const newRow = { cenario: 'Principal', ...row };
-            allRows.push(newRow);
-            Object.keys(newRow).forEach(k => allHeaders.add(k));
+            const key = row.chave_dinamica || `${row.codigo}-${row.nome}`;
+            if (!allRowsByKey.has(key)) allRowsByKey.set(key, {});
+            const existing = allRowsByKey.get(key);
+            allRowsByKey.set(key, { ...existing, ...row, cenario: 'Principal' });
+            Object.keys(row).forEach(k => allHeaders.add(k));
           }
         });
 
         // Fetch and add additional spreadsheets
         for (let i = 0; i < additional.length; i++) {
           const s = additional[i];
-          if (!s.spreadsheetId) continue;
+          if (!s.spreadsheetId || s.label === cenarioSelecionado) continue;
           try {
             const snap = await new Promise(resolve => {
               onValue(ref(db, `tenants/${empresaId}/tabelaGoogle_${i}`), resolve, { onlyOnce: true });
             });
             const addData = snap.val() || [];
             const addArray = Array.isArray(addData) ? addData : Object.values(addData);
-            const label = s.label || `Planilha ${i + 1}`;
+            const cenarioLabel = s.label || `Planilha ${i + 1}`;
             addArray.forEach(row => {
               if (typeof row === 'object' && row !== null) {
-                const newRow = { cenario: label, ...row };
-                allRows.push(newRow);
-                Object.keys(newRow).forEach(k => allHeaders.add(k));
+                const key = row.chave_dinamica || `${row.codigo}-${row.nome}`;
+                if (!allRowsByKey.has(key)) allRowsByKey.set(key, {});
+                const existing = allRowsByKey.get(key);
+                
+                // Mescla os dados, priorizando os já existentes, mas adicionando o cenário
+                const mergedRow = { ...row, ...existing, cenario: existing.cenario || cenarioLabel };
+                allRowsByKey.set(key, mergedRow);
+                Object.keys(row).forEach(k => allHeaders.add(k));
               }
             });
           } catch (e) {
             console.warn(`Erro ao carregar planilha adicional ${i}:`, e);
           }
         }
+
+        const allRows = Array.from(allRowsByKey.values());
 
         const headerList = Array.from(allHeaders);
         setHeaders(headerList);
@@ -1628,19 +1728,24 @@ function TabelaDinamicaComponent({ empresaId, onDataChange, onColsChange, instan
       <div className="mb-4">
         <p className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>Colunas visíveis:</p>
         <div className="flex flex-wrap gap-1">
-          {Array.from(new Set(['chave_dinamica', ...headers])).sort().map(col => (
-            <button
-              key={col}
-              onClick={() => toggleColumn(col)}
-              className={`text-xs px-2 py-1 rounded-full transition-colors ${
-                selectedCols.includes(col)
-                  ? 'text-white bg-[var(--accent)]'
-                  : 'text-[var(--text-muted)] bg-[var(--surface-2)] hover:bg-[var(--surface)]'
-              }`}
-            >
-              {col}
-            </button>
-          ))}
+          {(() => {
+            const available = Array.from(new Set(['chave_dinamica', ...headers]));
+            // Remover nomes de cenários (labels/nome) da lista de campos disponíveis
+            const filtered = available.filter(col => !cenarios.some(c => c.nome === col || c.label === col));
+            return filtered.sort().map(col => (
+              <button
+                key={col}
+                onClick={() => toggleColumn(col)}
+                className={`text-xs px-2 py-1 rounded-full transition-colors ${
+                  selectedCols.includes(col)
+                    ? 'text-white bg-[var(--accent)]'
+                    : 'text-[var(--text-muted)] bg-[var(--surface-2)] hover:bg-[var(--surface)]'
+                }`}
+              >
+                {col}
+              </button>
+            ));
+          })()}
         </div>
       </div>
 

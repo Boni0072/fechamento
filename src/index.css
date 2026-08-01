@@ -184,6 +184,13 @@ input::placeholder {
 .badge-info { background: var(--info-soft); color: var(--info); }
 .badge-accent { background: var(--accent-soft); color: var(--accent); }
 
+/* Improve badge contrast: solid color backgrounds with readable text */
+.badge-success { background: var(--success); color: #04120e; }
+.badge-danger  { background: var(--danger);  color: #ffffff; }
+.badge-warning { background: var(--warning); color: #04120e; }
+.badge-info    { background: var(--info);    color: #ffffff; }
+.badge-accent  { background: var(--accent);  color: #04120e; }
+
 /* Icon Chip */
 .icon-chip {
   width: 32px;
@@ -248,7 +255,7 @@ input::placeholder {
 /* Table */
 .table-wrap {
   overflow-x: auto;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
 }
 table {
@@ -256,26 +263,42 @@ table {
   border-collapse: collapse;
   font-size: 12.5px;
 }
-thead {
-  background: var(--surface);
-}
-th {
+ thead {
+  background: var(--surface-2);
+ }
+ th {
   padding: 10px 14px;
   text-align: left;
   font-weight: 600;
-  color: var(--text-muted);
+  color: var(--text);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  border-bottom: 1px solid var(--border);
-}
-td {
+  border-bottom: 1px solid var(--border-strong);
+ }
+ td {
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
   color: var(--text);
+ }
+ tr:last-child td { border-bottom: none; }
+
+/* Zebra rows with stronger contrast for readability */
+tbody tr:nth-child(odd) td {
+  background: var(--surface);
 }
-tr:last-child td { border-bottom: none; }
-tr:hover td { background: rgba(255,255,255,0.03); }
+tbody tr:nth-child(even) td {
+  background: var(--surface-2);
+}
+
+/* Hover state */
+tr:hover td { background: rgba(255,255,255,0.06); }
+
+/* Sticky column/cell should preserve high contrast */
+th.sticky, td.sticky, th.sticky.left-0, td.sticky.left-0 {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+}
 
 /* Progress bar */
 .progress-bar {
