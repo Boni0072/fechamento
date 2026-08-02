@@ -14,6 +14,7 @@ const TaskCarousel = ({ tasks, setEtapaSelecionada }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [now, setNow] = useState(new Date());
   const cardRef = useRef(null);
+  const sideBarRef = useRef(null);
 
   useEffect(() => {
     if (tasks.length <= 1) return;
@@ -42,6 +43,7 @@ const TaskCarousel = ({ tasks, setEtapaSelecionada }) => {
   // Blink effect - alterna fundo do card, outline e cor do texto
   useEffect(() => {
     const el = cardRef.current;
+    const sideBar = sideBarRef.current;
     if (!el) return;
     if (!isLate) {
       el.style.backgroundColor = '';
@@ -58,11 +60,13 @@ const TaskCarousel = ({ tasks, setEtapaSelecionada }) => {
         el.style.outline = '3px solid #ef4444';
         el.style.color = '#b91c1c';
         el.style.fontWeight = '700';
+        if (sideBar) sideBar.style.backgroundColor = '#ef4444'; // Pisca a barra
       } else {
         el.style.backgroundColor = '#ffffff';
         el.style.outline = '3px solid #fca5a5';
         el.style.color = '#7f1d1d';
         el.style.fontWeight = '600';
+        if (sideBar) sideBar.style.backgroundColor = '#fca5a5'; // Estado alternado da barra
       }
     }, 500);
     return () => {
@@ -72,6 +76,7 @@ const TaskCarousel = ({ tasks, setEtapaSelecionada }) => {
         el.style.outline = '';
         el.style.color = '';
         el.style.fontWeight = '';
+        if (sideBar) sideBar.style.backgroundColor = ''; // Limpa a cor da barra
       }
     };
   }, [isLate]);
@@ -95,7 +100,7 @@ const TaskCarousel = ({ tasks, setEtapaSelecionada }) => {
         onClick={(e) => { e.stopPropagation(); setEtapaSelecionada(etapa); }}
         className="flex flex-col rounded-lg shadow-sm text-left hover:shadow-md relative overflow-hidden border border-slate-200 w-full max-w-[95%] group shrink-0 h-fit bg-white"
       >
-        <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${borderColor}`}></div>
+        <div ref={sideBarRef} className={`absolute left-0 top-0 bottom-0 w-1.5 ${borderColor}`}></div>
         
         <div className="p-2.5 pb-1.5 overflow-hidden">
           <div className="font-bold text-[17px] text-slate-900 leading-tight line-clamp-2 break-words min-h-[2.5em]">

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from '../pages/Sidebar';
 import { useAuth } from '../contexts/AuthContext';
@@ -13,10 +13,13 @@ export default function Layout() {
   const { empresaAtual } = useAuth();
   const [syncState, setSyncState] = useState({ status: 'idle', message: '', lastSync: null });
   const [autoSync, setAutoSync] = useState(false);
-  const [syncIntervalMinutes, setSyncIntervalMinutes] = useState(1);
+  const [syncIntervalMinutes, setSyncIntervalMinutes] = useState(5); // Aumentado para 5 min
+  const lastFetchedCsvText = useRef(null); // Cache para o conteúdo da planilha
+  const lastSyncedDataJson = useRef(null); // Cache para os dados processados
 
   const syncGoogleSheet = useCallback(async () => {
     if (!empresaAtual?.id || !empresaAtual?.spreadsheetId) return;
+
     setSyncState(prev => ({ ...prev, status: 'syncing', message: 'Sincronizando...' }));
     try {
       const sheetParam = empresaAtual.sheetName ? `&sheet=${encodeURIComponent(empresaAtual.sheetName)}` : '&gid=0';
@@ -27,10 +30,26 @@ export default function Layout() {
       if (csvText.trim().toLowerCase().startsWith('<!doctype html') || csvText.includes('<html')) {
         throw new Error('Planilha privada ou link inválido');
       }
+
+      // Otimização de Leitura: Compara o CSV atual com o anterior. Se for igual, não faz nada.
+      if (lastFetchedCsvText.current === csvText) {
+        setSyncState({ status: 'success', message: 'Nenhuma alteração detectada', lastSync: new Date() });
+        return;
+      }
+      lastFetchedCsvText.current = csvText;
+
       const workbook = XLSX.read(csvText, { type: 'string' });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const data = XLSX.utils.sheet_to_json(sheet, { raw: true });
       if (!data || data.length === 0) throw new Error('Planilha vazia');
+
+      // Otimização de Escrita: Processa os dados e compara com o cache antes de escrever.
+      const processedDataForDb = processData(data, []);
+      const processedDataJson = JSON.stringify(processedDataForDb);
+      if (lastSyncedDataJson.current === processedDataJson) {
+        setSyncState({ status: 'success', message: 'Nenhuma alteração de dados para sincronizar', lastSync: new Date() });
+        return;
+      }
 
       const rawTasksByPeriod = data.reduce((acc, row) => {
         const tempProcessed = processData([row], [])[0];
@@ -54,33 +73,48 @@ export default function Layout() {
         const rawRows = rawTasksByPeriod[periodKey];
         let periodDoc = existingPeriods.find(p => p.ano === year && p.mes === month);
         let periodId;
-        let currentDocs = [];
+        let currentDocs = []; // Armazena as etapas existentes para o período
+
         if (periodDoc) {
           periodId = periodDoc.id;
+          // Otimização: Busca os documentos existentes do período UMA VEZ.
           const snapshot = await getDocs(collection(firestore, 'tenants', empresaAtual.id, 'periodos', periodId, 'etapas'));
           currentDocs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
         } else {
           const newPeriodRef = doc(collection(firestore, 'tenants', empresaAtual.id, 'periodos'));
           await setDoc(newPeriodRef, { ano: year, mes: month, status: 'aberto', createdAt: new Date().toISOString() });
           periodId = newPeriodRef.id;
+          // Se o período é novo, não há documentos existentes.
+          currentDocs = [];
         }
         const processedSteps = processData(rawRows, currentDocs);
         const batch = writeBatch(firestore);
         const keptIds = new Set();
         const etapasColRef = collection(firestore, 'tenants', empresaAtual.id, 'periodos', periodId, 'etapas');
+
         processedSteps.forEach(step => {
           const { id, ...stepData } = step;
           const docRef = id ? doc(etapasColRef, id) : doc(etapasColRef);
-          batch.set(docRef, stepData, { merge: true });
+
+          const existing = id ? currentDocs.find(d => d.id === id) : null;
+          
+          // Otimização: Escreve apenas se houver mudança
+          const hasChanged = !existing || Object.keys(stepData).some(key => String(stepData[key] ?? '') !== String(existing[key] ?? ''));
+
+          if (hasChanged) {
+            batch.set(docRef, stepData, { merge: true });
+          }
           if (id) keptIds.add(id);
         });
+
         currentDocs.forEach(d => { if (!keptIds.has(d.id)) batch.delete(doc(etapasColRef, d.id)); });
         await batch.commit();
         totalStepsSynced += processedSteps.length;
       }));
 
       if (database) {
-        await set(ref(database, `tenants/${empresaAtual.id}/tabelaGoogle`), processData(data, []));
+        await set(ref(database, `tenants/${empresaAtual.id}/tabelaGoogle`), processedDataForDb);
+        lastSyncedDataJson.current = processedDataJson; // Atualiza o cache de dados processados
       }
       setSyncState({ status: 'success', message: `${totalStepsSynced} etapas em ${Object.keys(rawTasksByPeriod).length} períodos`, lastSync: new Date() });
     } catch (error) {
@@ -89,7 +123,6 @@ export default function Layout() {
     }
   }, [empresaAtual]);
 
-  useEffect(() => { syncGoogleSheet(); }, [syncGoogleSheet]);
   useEffect(() => {
     if (autoSync) {
       const interval = setInterval(syncGoogleSheet, syncIntervalMinutes * 60 * 1000);
@@ -173,7 +206,7 @@ const processData = (data, existingSteps) => {
   const normalizeVal = (str) => str ? String(str).trim().replace(/\s+/g, ' ').toLowerCase() : '';
   const headerMap = new Map();
   if (data.length > 0) {
-    Object.keys(data[0]).forEach(k => headerMap.set(normalizeVal(k), k));
+    Object.keys(data[0]).forEach(k => headerMap.set(normalizeVal(k), k.trim()));
   }
   
   const formatarData = (valor) => {
@@ -236,7 +269,7 @@ const processData = (data, existingSteps) => {
     const getVal = (keys) => {
       for (const k of keys) {
         const normalKey = normalizeVal(k);
-        const actualKey = headerMap.get(normalKey);
+        const actualKey = headerMap.get(normalKey) || k;
         const val = actualKey ? row[actualKey] : row[k];
         if (val !== undefined && val !== null && String(val).trim() !== '') return val;
       }

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { doc, updateDoc, setDoc, onSnapshot, deleteDoc, getDoc } from 'firebase/firestore';
-import { ref, set } from 'firebase/database';
+import { ref, set, get } from 'firebase/database';
 import { useAuth } from '../contexts/AuthContext';
 import { firestore, db as rtdb } from '../firebase';
 import { usePermissao } from '../hooks/usePermissao';
@@ -505,8 +505,19 @@ export default function Empresas() {
       }
 
       // 2. Salva os DADOS no Realtime Database (para leitura rápida nas outras telas)
+      // OTIMIZAÇÃO: Compara com o cache existente antes de escrever no RTDB
       const tabelaRef = ref(rtdb, `tenants/${configEmpresa.id}/tabelaGoogle`);
-      await set(tabelaRef, processedData);
+      const snapshot = await get(tabelaRef);
+      // A verificação de `snapshot.exists()` é crucial aqui
+      const existingData = snapshot.exists() ? snapshot.val() : null;
+      
+      // Converte ambos para JSON para uma comparação de valor profundo e confiável.
+      const existingJson = existingData ? JSON.stringify(existingData) : null;
+      const newJson = JSON.stringify(processedData);
+
+      if (existingJson !== newJson) {
+        await set(tabelaRef, processedData);
+      }
 
       // 3. Salva planilhas adicionais no Firestore e RTDB
       if (additionalSpreadsheets.length > 0) {
@@ -1435,7 +1446,7 @@ const processData = (data) => {
   const headerMap = new Map();
   if (data.length > 0) {
     // Mapeia chaves da primeira linha como referência
-    Object.keys(data[0]).forEach(k => headerMap.set(normalizeVal(k), k));
+    Object.keys(data[0]).forEach(k => headerMap.set(normalizeVal(k), k.trim()));
   }
 
   const formatarData = (valor) => {
@@ -1531,18 +1542,13 @@ const processData = (data) => {
   };
 
   data.forEach((row) => {
-    // Mapa local da linha para garantir consistência se houver chaves variáveis
-    const rowKeyMap = new Map();
-    Object.keys(row).forEach(k => rowKeyMap.set(normalizeVal(k), k));
-
     const getVal = (keys) => {
       for (const k of keys) {
-        // 1. Busca direta (mais rápida)
-        if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '') return row[k];
-        
-        // 2. Busca normalizada via Map (O(1) vs O(N) anterior)
+        const directVal = row[k];
+        if (directVal !== undefined && directVal !== null && String(directVal).trim() !== '') return directVal;
+
         const target = normalizeVal(k);
-        const actualKey = rowKeyMap.get(target) || headerMap.get(target);
+        const actualKey = headerMap.get(target);
         
         if (actualKey && row[actualKey] !== undefined && row[actualKey] !== null && String(row[actualKey]).trim() !== '') {
           return row[actualKey];

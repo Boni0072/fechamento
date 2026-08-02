@@ -103,61 +103,36 @@ export default function Etapas() {
       setLoadingData(false);
       return;
     }
-
-    if (etapas.length === 0) {
-      setLoadingData(true);
-    }
-
+    
+    setLoadingData(true);
     const db = getDatabase();
     const googleTableRef = ref(db, `tenants/${empresaAtual.id}/tabelaGoogle`);
     const manuaisRef = ref(db, `tenants/${empresaAtual.id}/etapasManuais`);
+    
+    let googleEtapasCache = [];
+    let manuaisEtapasCache = [];
 
-    const handleData = () => {
-      // Lê ambos os nós e mescla
-      Promise.all([
-        get(googleTableRef),
-        get(manuaisRef)
-      ]).then(([googleSnap, manuaisSnap]) => {
-        const googleData = googleSnap.val();
-        const manuaisData = manuaisSnap.val();
+    const mergeAndSetEtapas = () => {
+      const allEtapas = [...googleEtapasCache, ...manuaisEtapasCache];
+      setEtapas(allEtapas);
 
-        let googleEtapas = [];
-        if (googleData) {
-          googleEtapas = processRealtimeData(googleData).map((e, index) => ({
-            ...e,
-            _originalIndex: index,
-            _fonte: 'planilha'
-          }));
-        }
-
-        let manuaisEtapas = [];
-        if (manuaisData) {
-          manuaisEtapas = processRealtimeData(Object.values(manuaisData)).map((e, index) => ({
-            ...e,
-            _originalIndex: googleEtapas.length + index,
-            _idManual: Object.keys(manuaisData)[index],
-            _fonte: 'manual'
-          }));
-        }
-
-        // Mescla: primeiro as da planilha, depois as manuais
-        const allEtapas = [...googleEtapas, ...manuaisEtapas];
-        setEtapas(allEtapas);
-
+      if (allEtapas.length > 0) {
         const periodosPorData = new Map();
         allEtapas.forEach(etapa => {
-          const dataPrevista = new Date(etapa.dataPrevista);
-          if (!isNaN(dataPrevista.getTime())) {
-            const mes = dataPrevista.getMonth() + 1;
-            const ano = dataPrevista.getFullYear();
-            periodosPorData.set(`${mes}-${ano}`, { id: `${mes}-${ano}`, mes, ano });
+          if (etapa.dataPrevista) {
+            const dataPrevista = new Date(etapa.dataPrevista);
+            if (!isNaN(dataPrevista.getTime())) {
+              const mes = dataPrevista.getMonth() + 1;
+              const ano = dataPrevista.getFullYear();
+              periodosPorData.set(`${mes}-${ano}`, { id: `${mes}-${ano}`, mes, ano });
+            }
           }
         });
         const periodosOrdenados = Array.from(periodosPorData.values()).sort((a, b) => b.ano - a.ano || b.mes - a.mes);
         const periodosDisponiveis = [{ id: 'todos', mes: 'Todos', ano: '' }, ...periodosOrdenados];
         setPeriodos(periodosDisponiveis);
         setPeriodoSelecionado(prev => periodosDisponiveis.find(p => p.id === prev?.id) || periodosDisponiveis[0]);
-
+        
         const uniqueAreas = [...new Set(allEtapas.map(e => e.area).filter(Boolean))].sort();
         setAreas(uniqueAreas.map((a, i) => ({ id: i, nome: a })));
         
@@ -165,17 +140,31 @@ export default function Etapas() {
         setResponsaveis(uniqueResps.map((r, i) => ({ id: i, nome: r })));
         
         setLoadingData(false);
-      }).catch(err => {
-        console.error("Erro ao carregar dados:", err);
+      } else {
         setLoadingData(false);
-      });
+      }
     };
 
-    handleData();
+    const unsubGoogle = onValue(googleTableRef, (snapshot) => {
+      const googleData = snapshot.val();
+      googleEtapasCache = googleData 
+        ? processRealtimeData(googleData).map((e, index) => ({ ...e, _originalIndex: index, _fonte: 'planilha' }))
+        : [];
+      mergeAndSetEtapas();
+    }, (error) => { console.error("Erro no listener de tabelaGoogle:", error); setLoadingData(false); });
 
-    // Escuta mudanças em ambos os nós
-    const unsubGoogle = onValue(googleTableRef, handleData);
-    const unsubManuais = onValue(manuaisRef, handleData);
+    const unsubManuais = onValue(manuaisRef, (snapshot) => {
+      const manuaisData = snapshot.val();
+      manuaisEtapasCache = manuaisData
+        ? processRealtimeData(Object.values(manuaisData)).map((e, index) => ({
+            ...e,
+            _originalIndex: (googleEtapasCache?.length || 0) + index,
+            _idManual: Object.keys(manuaisData)[index],
+            _fonte: 'manual'
+          }))
+        : [];
+      mergeAndSetEtapas();
+    }, (error) => { console.error("Erro no listener de etapasManuais:", error); setLoadingData(false); });
 
     return () => {
       unsubGoogle();
@@ -203,20 +192,11 @@ export default function Etapas() {
     if (!empresaAtual?.id) return;
 
     const db = getDatabase();
-    const tabelaRef = ref(db, `tenants/${empresaAtual.id}/tabelaGoogle`);
+    // Otimização: Referencia diretamente o item no array do RTDB
+    const itemRef = ref(db, `tenants/${empresaAtual.id}/tabelaGoogle/${etapa._originalIndex}`);
 
     try {
-      const snapshot = await get(tabelaRef);
-      const dataArray = snapshot.val();
-
-      if (!Array.isArray(dataArray) || dataArray.length <= etapa._originalIndex) {
-        alert("Erro: Dados dessincronizados. A página será recarregada.");
-        window.location.reload();
-        return;
-      }
-
-      const newDataArray = [...dataArray];
-      const itemToUpdate = { ...newDataArray[etapa._originalIndex] };
+      const itemToUpdate = { ...etapa }; // Usa a etapa do estado, que já é a mais recente
 
       const status = (itemToUpdate['STATUS'] || '').toLowerCase();
       const isConcluido = status.includes('conclu');
@@ -238,9 +218,8 @@ export default function Etapas() {
         itemToUpdate['STATUS'] = 'Concluído';
       }
 
-      // 1. Atualiza o Realtime Database (Cache rápido do Dashboard)
-      newDataArray[etapa._originalIndex] = itemToUpdate;
-      await set(tabelaRef, newDataArray);
+      // 1. Otimização: Atualiza apenas o item específico no Realtime Database
+      await set(itemRef, itemToUpdate);
 
       // 2. Atualiza o Firestore (Banco permanente) para evitar discrepância
       if (etapa.id && etapa.periodoId) {

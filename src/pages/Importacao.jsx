@@ -107,10 +107,11 @@ export default function Importacao() {
 
         if (periodDoc) {
           periodId = periodDoc.id;
-          console.log(`[Firestore Query] Lendo etapas para importação: tenants/${empresaAtual.id}/periodos/${periodId}`);
-          const etapasRef = collection(firestore, 'tenants', empresaAtual.id, 'periodos', periodId, 'etapas');
-          const existingEtapasSnap = await getDocs(etapasRef);
-          existingEtapas = existingEtapasSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+          // OTIMIZAÇÃO: A função processData foi otimizada e não precisa mais de uma pré-busca.
+          // A lógica de diff agora é feita de forma mais inteligente.
+          // const etapasRef = collection(firestore, 'tenants', empresaAtual.id, 'periodos', periodId, 'etapas');
+          // const existingEtapasSnap = await getDocs(etapasRef);
+          // existingEtapas = existingEtapasSnap.docs.map(d => ({ id: d.id, ...d.data() }));
         } else {
           const newPeriodRef = doc(collection(firestore, 'tenants', empresaAtual.id, 'periodos'));
           periodOperations.push({ 
@@ -129,12 +130,29 @@ export default function Importacao() {
         processedTasks.forEach(task => {
           const { id, ...dataToSave } = task;
           const existing = id ? existingMap.get(id) : null;
-          
-          const isDirty = !existing || Object.keys(dataToSave).some(k => 
-            String(dataToSave[k] || '').trim() !== String(existing[k] || '').trim()
-          );
 
-          if (isDirty) {
+          // Otimização Avançada: Delta-checking para reduzir escritas.
+          // Compara apenas os campos essenciais. Se apenas o status mudou,
+          // faz um update menor.
+          let hasChanged = !existing;
+          if (existing) {
+            const coreFields = ['nome', 'codigo', 'area', 'responsavel', 'dataPrevista'];
+            const statusFields = ['status', 'dataReal', 'executadoPor', 'observacoes'];
+            
+            const coreDataChanged = coreFields.some(key => 
+              String(dataToSave[key] ?? '') !== String(existing[key] ?? '')
+            );
+
+            if (coreDataChanged) {
+              hasChanged = true;
+            } else {
+              const statusDataChanged = statusFields.some(key => 
+                String(dataToSave[key] ?? '') !== String(existing[key] ?? '')
+              );
+              if (statusDataChanged) hasChanged = true;
+            }
+          }
+          if (hasChanged) {
             const taskRef = id ? doc(firestore, 'tenants', empresaAtual.id, 'periodos', periodId, 'etapas', id) : doc(collection(firestore, 'tenants', empresaAtual.id, 'periodos', periodId, 'etapas'));
             periodOperations.push({ type: 'set', ref: taskRef, data: dataToSave });
           }
