@@ -20,7 +20,7 @@ const TaskCarousel = ({ tasks, setEtapaSelecionada }) => {
     if (tasks.length <= 1) return;
     
     const interval = setInterval(() => {
-      setCurrentIndex((prevIndex) => (prevIndex + 1) % tasks.length);
+      setCurrentIndex(prevIndex => (prevIndex + 1) % tasks.length);
     }, 3000);
 
     return () => clearInterval(interval);
@@ -97,10 +97,10 @@ const TaskCarousel = ({ tasks, setEtapaSelecionada }) => {
       <button 
         ref={cardRef}
         key={etapa.id}
-        onClick={(e) => { e.stopPropagation(); setEtapaSelecionada(etapa); }}
-        className="flex flex-col rounded-lg shadow-sm text-left hover:shadow-md relative overflow-hidden border border-slate-200 w-full max-w-[95%] group shrink-0 h-fit bg-white"
+        onClick={(e) => {e.stopPropagation(); setEtapaSelecionada(etapa);}}
+        className="flex flex-col rounded-lg shadow-sm text-left hover:shadow-md relative overflow-hidden border border-slate-200 w-full max-w-[95%] group shrink-0 h-full bg-white transition-transform duration-300"
       >
-        <div ref={sideBarRef} className={`absolute left-0 top-0 bottom-0 w-1.5 ${borderColor}`}></div>
+        <div ref={sideBarRef} className={`absolute left-0 top-0 bottom-0 w-1.5 ${borderColor}`} />
         
         <div className="p-2.5 pb-1.5 overflow-hidden">
           <div className="font-bold text-[17px] text-slate-900 leading-tight line-clamp-2 break-words min-h-[2.5em]">
@@ -108,17 +108,17 @@ const TaskCarousel = ({ tasks, setEtapaSelecionada }) => {
           </div>
         </div>
 
-        <div className="mx-2.5 mb-2.5 p-2 bg-slate-50 rounded-md border border-slate-100 flex items-center justify-between overflow-hidden shrink-0">
+        <div className="mx-2.5 mb-2.5 mt-auto p-2 bg-slate-50 rounded-md border border-slate-100 flex items-center justify-between overflow-hidden shrink-0">
           <div className="flex items-center gap-1.5 text-[12px] text-slate-500 shrink-0">
             <span className="font-medium whitespace-nowrap">Área:</span>
             <span className="font-bold text-slate-700">{etapa.area || '-'}</span>
           </div>
-          <div className="h-3 w-[1px] bg-slate-200 shrink-0"></div>
+          <div className="h-3 w-[1px] bg-slate-200 shrink-0" />
           <div className="flex items-center gap-1.5 text-[12px] text-slate-500 shrink-0">
             <span className="font-medium whitespace-nowrap">Resp:</span>
             <span className="font-bold text-slate-700">{etapa.responsavel || '-'}</span>
           </div>
-          <div className="h-3 w-[1px] bg-slate-200 shrink-0"></div>
+          <div className="h-3 w-[1px] bg-slate-200 shrink-0" />
           <div className="flex items-center gap-1.5 text-[12px] text-slate-500 overflow-hidden">
            <span className="font-medium shrink-0 whitespace-nowrap">Exec:</span>
             <span className="font-bold text-slate-700 truncate">{etapa.executadoPor || '-'}</span>
@@ -154,9 +154,10 @@ export default function Fluxograma() {
   const [etapaSelecionada, setEtapaSelecionada] = useState(null);
   const [intervalo, setIntervalo] = useState(1);
   const [horaInicio, setHoraInicio] = useState(0);
-    const [horaFim, setHoraFim] = useState(23);
-  const [alturaSlot, setAlturaSlot] = useState(240); // Aumentado para acomodar 2 cards confortavelmente
+  const [horaFim, setHoraFim] = useState(23);
+  const [alturaSlot, setAlturaSlot] = useState(128);
   const [larguraColuna, setLarguraColuna] = useState(450);
+  const [isMobile, setIsMobile] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [empresaDados, setEmpresaDados] = useState(null);
   const [showAtrasadasModal, setShowAtrasadasModal] = useState(false);
@@ -246,7 +247,7 @@ export default function Fluxograma() {
   const renderHeader = useCallback(({ date }) => {
     const dateStr = format(date, 'yyyy-MM-dd');
     const count = etapas.filter(e => e.dataPrevista && format(new Date(e.dataPrevista), 'yyyy-MM-dd') === dateStr).length;
-    return <div className="text-xs font-normal text-slate-500 mt-1">{count} etapa{count !== 1 && 's'}</div>;
+    return <div className="text-[10px] lg:text-xs font-normal text-slate-500 mt-0.5 lg:mt-1">{count} etapa{count !== 1 && 's'}</div>;
   }, [etapas]);
 
   useEffect(() => {
@@ -424,6 +425,22 @@ export default function Fluxograma() {
     return differenceInCalendarDays(endPeriod, dataInicio) + 1;
   }, [dataInicio, etapas, periodoSelecionado]);
 
+  // Detecta se está em dispositivo móvel e ajusta a largura da coluna
+  useEffect(() => {
+    const checkMobile = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      // Não sobrescreve a largura quando em fullscreen
+      if (!document.fullscreenElement) {
+        setLarguraColuna(mobile ? 280 : 450);
+      }
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
   useEffect(() => {
     const computeFullscreenWidth = () => {
       if (!pageRef.current) return 450;
@@ -435,7 +452,7 @@ export default function Fluxograma() {
       const active = !!document.fullscreenElement;
       setIsFullscreen(active);
       if (!active) {
-        setLarguraColuna(450);
+        setLarguraColuna(isMobile ? 280 : 450);
       } else {
         setLarguraColuna(computeFullscreenWidth());
       }
@@ -454,7 +471,7 @@ export default function Fluxograma() {
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, []);
+  }, [isMobile]);
 
   if (loadingPermissoes || loadingProfile || (authUser && !userProfile)) {
     return <div className="flex items-center justify-center h-96 text-slate-500">Carregando permissões...</div>;
@@ -471,12 +488,12 @@ export default function Fluxograma() {
 
   return (
     <div ref={pageRef} className="animate-fadeIn">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between mb-4 lg:mb-6 gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">Fluxograma do Fechamento</h1>
-          <p className="text-slate-500">Visualização interativa das etapas do fechamento contábil</p>
+          <h1 className="text-xl lg:text-2xl font-bold text-slate-800">Fluxograma do Fechamento</h1>
+          <p className="text-sm lg:text-base text-slate-500">Visualização interativa das etapas do fechamento contábil</p>
         </div>
-        <div className="flex gap-3 items-center">
+        <div className="flex flex-wrap gap-2 lg:gap-3 items-center">
           <div className="period-filter-group">
             <span className="period-filter-label">Período</span>
             <select
@@ -497,8 +514,8 @@ export default function Fluxograma() {
             })}
             </select>
           </div>
-          <div className="bg-white px-4 py-2 rounded-lg shadow-sm flex items-center gap-3 border border-slate-200">
-            <div className="relative w-10 h-10">
+          <div className="bg-white px-3 lg:px-4 py-2 rounded-lg shadow-sm flex items-center gap-2 lg:gap-3 border border-slate-200">
+            <div className="relative w-8 h-8 lg:w-10 lg:h-10">
               <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
                 <path className="text-slate-100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="3" />
                 <path className="text-green-500" strokeDasharray={`${percentual}, 100`} d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="3" />
@@ -514,21 +531,17 @@ export default function Fluxograma() {
           <button
             type="button"
             onClick={() => setShowAtrasadasModal(true)}
-            className="bg-white px-4 py-2 rounded-lg shadow-sm flex items-center gap-3 border border-slate-200 hover:bg-slate-50 transition-colors text-left"
+            className="bg-white px-3 lg:px-4 py-2 rounded-lg shadow-sm flex items-center gap-2 lg:gap-3 border border-slate-200 hover:bg-slate-50 transition-colors text-left"
           >
             <div>
               <p className="text-xs text-slate-500 font-medium">Atrasadas</p>
               <p className="text-sm font-bold text-red-600">{atrasadas}</p>
             </div>
-            <div className="w-8 h-8 bg-red-50 rounded-lg flex items-center justify-center">
+            <div className="w-7 h-7 lg:w-8 lg:h-8 bg-red-50 rounded-lg flex items-center justify-center">
               <AlertTriangle className="w-4 h-4 text-red-600" />
             </div>
           </button>
 
-          <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2">
-            <span className="text-xs text-slate-500 font-medium">Zoom:</span>
-            <input type="range" min="60" max="600" step="10" value={alturaSlot} onChange={(e) => setAlturaSlot(Number(e.target.value))} className="w-24 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600" />
-          </div>
           <button 
             onClick={async () => {
               if (!isFullscreen) {
@@ -539,22 +552,22 @@ export default function Fluxograma() {
                 if (document.exitFullscreen) {
                   await document.exitFullscreen();
                 }
-                setLarguraColuna(450);
+                setLarguraColuna(isMobile ? 280 : 450);
                 setIsFullscreen(false);
               }
             }}
-            className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 flex items-center gap-2"
+            className="px-3 lg:px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 flex items-center gap-2"
             title={isFullscreen ? "Restaurar Grade" : "Expandir Grade"}
           >
             {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
-          <button onClick={() => timelineRef.current?.centerOnNow()} className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 flex items-center gap-2">
+          <button onClick={() => timelineRef.current?.centerOnNow()} className="px-3 lg:px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 flex items-center gap-2">
             <Calendar className="w-4 h-4" /> Hoje
           </button>
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm h-[calc(100vh-150px)] min-h-[650px] flex flex-col overflow-hidden">
+      <div className="bg-white rounded-xl shadow-sm h-[calc(100vh-150px)] min-h-[400px] lg:min-h-[650px] flex flex-col overflow-hidden">
         {etapas.length === 0 ? <p className="text-slate-500 text-center py-12">Nenhuma etapa cadastrada</p> : (
           <TimelineBackground 
             key={dataInicio.getTime()}

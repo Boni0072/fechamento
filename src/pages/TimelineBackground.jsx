@@ -20,9 +20,20 @@ const TimelineBackground = forwardRef(({
   const [now, setNow] = useState(new Date());
 
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
 
   const expandedAlturaSlot = 256;
   const currentAlturaSlot = isExpanded ? expandedAlturaSlot : alturaSlot;
+
+  // Detecta dispositivo móvel para ajustar a largura da coluna de horas
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 60000);
@@ -73,22 +84,22 @@ const TimelineBackground = forwardRef(({
   }, [dataInicio, currentAlturaSlot]);
 
   return (
-    <div ref={containerRef} className="h-full overflow-auto bg-white border border-slate-200 rounded-lg relative custom-scrollbar">
+    <div ref={containerRef} className="h-full overflow-auto bg-white border border-slate-200 rounded-lg relative custom-scrollbar touch-pan-x touch-pan-y">
       <button 
         onClick={() => setIsExpanded(!isExpanded)}
-        className="absolute top-2 right-2 z-50 bg-white hover:bg-slate-100 text-slate-600 text-xs font-semibold py-1 px-3 rounded-full shadow-md"
+        className="absolute top-2 right-2 z-50 bg-white hover:bg-slate-100 text-slate-600 text-xs font-semibold py-1 px-2 lg:px-3 rounded-full shadow-md"
       >
         {isExpanded ? 'Recolher' : 'Expandir'}
       </button>
       <div className="flex min-w-max relative">
         {/* Coluna de Horas */}
-        <div className="sticky left-0 z-30 bg-slate-50 border-r border-slate-200 flex flex-col shrink-0 w-16 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-           <div className="h-[49px] border-b border-slate-200 bg-slate-100 sticky top-0 z-40 flex items-center justify-center text-xs font-semibold text-slate-500">
+        <div className={`sticky left-0 z-30 bg-slate-50 border-r border-slate-200 flex flex-col shrink-0 ${isMobile ? 'w-12' : 'w-16'} shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]`}>
+           <div className="h-[49px] border-b border-slate-200 bg-slate-100 sticky top-0 z-40 flex items-center justify-center text-[10px] lg:text-xs font-semibold text-slate-500">
              Horário
            </div>
            
            {horas.map(hora => (
-             <div key={hora} style={{ height: `${currentAlturaSlot}px` }} className="flex items-start justify-center pt-2 text-xs font-medium text-slate-500 border-b border-slate-100 bg-slate-50">
+             <div key={hora} style={{ height: `${currentAlturaSlot}px` }} className="flex items-start justify-center pt-2 text-[10px] lg:text-xs font-medium text-slate-500 border-b border-slate-100 bg-slate-50">
                {String(hora).padStart(2, '0')}:00
              </div>
            ))}
@@ -98,8 +109,8 @@ const TimelineBackground = forwardRef(({
                className="absolute right-0 w-full z-50 pointer-events-none flex justify-end items-center"
                style={{ top: `${topPosition}px` }}
              >
-                <span className="text-xs font-semibold text-red-600 mr-2 bg-white bg-opacity-75 rounded-md px-1">{`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`}</span>
-               <div className="w-4 h-4 bg-red-600 rounded-full shadow-sm border-2 border-white translate-x-2"></div>
+                <span className="text-[10px] lg:text-xs font-semibold text-red-600 mr-2 bg-white bg-opacity-75 rounded-md px-1">{`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`}</span>
+               <div className="w-3 h-3 lg:w-4 lg:h-4 bg-red-600 rounded-full shadow-sm border-2 border-white translate-x-2"></div>
              </div>
            )}
         </div>
@@ -114,8 +125,8 @@ const TimelineBackground = forwardRef(({
             style={{ width: larguraColuna, minWidth: larguraColuna }}
             className={`flex flex-col border-r border-slate-200 shrink-0 z-10 ${isToday ? 'bg-blue-100' : 'bg-transparent'}`}
           >
-            <div className={`sticky top-0 z-20 py-3 text-center border-b border-slate-400 font-semibold shadow-sm ${isToday ? 'bg-blue-200 text-blue-800' : 'bg-slate-50 text-slate-700'}`}>
-              {format(dia, "dd 'de' MMM", { locale: ptBR })}
+            <div className={`sticky top-0 z-20 py-2 lg:py-3 px-1 text-center border-b border-slate-400 font-semibold shadow-sm ${isToday ? 'bg-blue-200 text-blue-800' : 'bg-slate-50 text-slate-700'}`}>
+              <div className="text-[11px] lg:text-sm leading-tight">{format(dia, "dd 'de' MMM", { locale: ptBR })}</div>
               {renderHeader && renderHeader({ date: dia })}
             </div>
             
