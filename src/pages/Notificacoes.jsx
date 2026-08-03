@@ -106,7 +106,17 @@ export default function Notificacoes() {
   }, [empresasParaBuscar]);
 
   useEffect(() => {
-    const allSteps = Object.values(stepsByCompany).flat();
+    const allStepsRaw = Object.values(stepsByCompany).flat();
+    // Correção: Usa uma chave composta para garantir a unicidade.
+    // Quando o id não existe (dados do RTDB sem etapas manuais), usa codigo+nome como fallback
+    const uniqueStepsMap = new Map();
+    allStepsRaw.forEach(step => {
+      const key = step.id
+        ? `${step.empresaId}-${step.id}`
+        : `${step.empresaId}-${step.codigo || ''}-${step.nome}`;
+      uniqueStepsMap.set(key, step);
+    });
+    const allSteps = Array.from(uniqueStepsMap.values());
     setAllEtapas(allSteps);
   }, [stepsByCompany]);
 

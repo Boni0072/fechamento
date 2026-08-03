@@ -318,7 +318,16 @@ export default function Fluxograma() {
   useEffect(() => {
     if (!empresaAtual) {
       const allSteps = Object.values(stepsByCompany).flat();
-      const uniqueById = allSteps.filter((item, index, self) => index === self.findIndex((t) => t.id === item.id));
+      // Correção: Usa uma chave composta para garantir a unicidade.
+      // Quando o id não existe (dados do RTDB sem etapas manuais), usa codigo+nome como fallback
+      const uniqueStepsMap = new Map();
+      allSteps.forEach(step => {
+        const key = step.id
+          ? `${step.empresaId}-${step.id}`
+          : `${step.empresaId}-${step.codigo || ''}-${step.nome}`;
+        uniqueStepsMap.set(key, step);
+      });
+      const uniqueById = Array.from(uniqueStepsMap.values());
       setAllEtapas(uniqueById);
     }
   }, [stepsByCompany, empresaAtual]);

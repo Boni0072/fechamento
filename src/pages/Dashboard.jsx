@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { doc, onSnapshot, collection, getDocs, writeBatch, setDoc } from 'firebase/firestore';
 import { firestore, db as database } from '../firebase';
-import { getEtapas } from '../services/database';
+import { getEtapas, getStatusColor, getStatusLabel } from '../services/database';
 import { Clock, AlertTriangle, Activity, Target, X, Info, RefreshCw, ChevronDown, ChevronUp, Trophy, Maximize2, Minimize2, CheckCircle2, ListChecks, Mail, Send } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
@@ -92,36 +92,86 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!empresaAtual) return;
-    const googleTableRef = ref(database, `tenants/${empresaAtual.id}/tabelaGoogle`);
-    const unsub = onValue(googleTableRef, (snapshot) => {
+    const empresaId = empresaAtual.id;
+    const googleTableRef = ref(database, `tenants/${empresaId}/tabelaGoogle`);
+    const manuaisRef = ref(database, `tenants/${empresaId}/etapasManuais`);
+    
+    let googleCache = [];
+    let manuaisCache = [];
+
+    const mergeAndSet = () => {
+      const allEtapas = [...googleCache, ...manuaisCache];
+      setStepsByCompany({ [empresaId]: allEtapas.map(e => ({ ...e, empresaNome: empresaAtual.nome, empresaId })) });
+    };
+
+    const unsubGoogle = onValue(googleTableRef, (snapshot) => {
       const data = snapshot.val();
-      const processedEtapas = data ? processRealtimeData(data) : [];
-      setStepsByCompany({ [empresaAtual.id]: processedEtapas.map(e => ({ ...e, empresaNome: empresaAtual.nome, empresaId: empresaAtual.id })) });
+      googleCache = data ? processRealtimeData(data).map(e => ({ ...e, _fonte: 'planilha' })) : [];
+      mergeAndSet();
     });
-    return () => unsub();
+
+    const unsubManuais = onValue(manuaisRef, (snapshot) => {
+      const manuaisData = snapshot.val();
+      manuaisCache = manuaisData ? processRealtimeData(Object.values(manuaisData)).map(e => ({ ...e, _fonte: 'manual' })) : [];
+      mergeAndSet();
+    });
+
+    return () => { unsubGoogle(); unsubManuais(); };
   }, [empresaAtual]);
 
   useEffect(() => {
     if (empresaAtual) return;
     if (!empresas || empresas.length === 0) { setStepsByCompany({}); return; }
     const unsubs = empresas.map(emp => {
-      const googleTableRef = ref(database, `tenants/${emp.id}/tabelaGoogle`);
-      return onValue(googleTableRef, (snapshot) => {
+      const empresaId = emp.id;
+      const googleTableRef = ref(database, `tenants/${empresaId}/tabelaGoogle`);
+      const manuaisRef = ref(database, `tenants/${empresaId}/etapasManuais`);
+
+      let googleCache = [];
+      let manuaisCache = [];
+
+      const mergeAndSet = () => {
+        const allEtapas = [...googleCache, ...manuaisCache];
+        setStepsByCompany(prev => ({ ...prev, [empresaId]: allEtapas.map(e => ({ ...e, empresaNome: emp.nome, empresaId })) }));
+      };
+
+      const unsubGoogle = onValue(googleTableRef, (snapshot) => {
         const data = snapshot.val();
-        const processedEtapas = data ? processRealtimeData(data) : [];
-        setStepsByCompany(prev => ({ ...prev, [emp.id]: processedEtapas.map(e => ({ ...e, empresaNome: emp.nome, empresaId: emp.id })) }));
+        googleCache = data ? processRealtimeData(data).map(e => ({ ...e, _fonte: 'planilha' })) : [];
+        mergeAndSet();
       });
+
+      const unsubManuais = onValue(manuaisRef, (snapshot) => {
+        const manuaisData = snapshot.val();
+        manuaisCache = manuaisData ? processRealtimeData(Object.values(manuaisData)).map(e => ({ ...e, _fonte: 'manual' })) : [];
+        mergeAndSet();
+      });
+
+      return () => { unsubGoogle(); unsubManuais(); };
     });
     return () => unsubs.forEach(unsub => unsub());
   }, [empresas, empresaAtual]);
 
   useEffect(() => {
-    const allSteps = Object.values(stepsByCompany).flat();
+    const allStepsRaw = Object.values(stepsByCompany).flat();
+    // Correção: Usa uma chave composta para garantir a unicidade.
+    // Quando o id não existe (dados do RTDB sem etapas manuais), usa codigo+nome como fallback
+    const uniqueStepsMap = new Map();
+    allStepsRaw.forEach(step => {
+      const key = step.id
+        ? `${step.empresaId}-${step.id}`
+        : `${step.empresaId}-${step.codigo || ''}-${step.nome}`;
+      uniqueStepsMap.set(key, step);
+    });
+    const allSteps = Array.from(uniqueStepsMap.values());
     setAllEtapas(allSteps);
     const periodsMap = new Map();
     allSteps.forEach(step => {
-      if (step.dataPrevista) {
-        const d = new Date(step.dataPrevista);
+      // Usa dataPrevista ou dataReal como referência do período, para que
+      // etapas concluídas só com dataReal também gerem o período no seletor
+      const dataRef = step.dataPrevista || step.dataReal;
+      if (dataRef) {
+        const d = new Date(dataRef);
         if (!isNaN(d.getTime())) {
           const key = `${d.getMonth()+1}-${d.getFullYear()}`;
           if (!periodsMap.has(key)) periodsMap.set(key, { id: key, mes: d.getMonth()+1, ano: d.getFullYear() });
@@ -138,8 +188,12 @@ export default function Dashboard() {
     let filtered = allEtapas;
     if (periodoSelecionado && periodoSelecionado.id !== 'todos') {
       filtered = allEtapas.filter(e => {
-        if (!e.dataPrevista) return false;
-        const d = new Date(e.dataPrevista);
+        // Usa dataPrevista ou dataReal como referência do período para não excluir
+        // etapas concluídas que possuem apenas dataReal preenchida
+        const dataRef = e.dataPrevista || e.dataReal;
+        if (!dataRef) return true; // Mantém etapas sem data definida
+        const d = new Date(dataRef);
+        if (isNaN(d.getTime())) return true;
         return (d.getMonth() + 1) == periodoSelecionado.mes && d.getFullYear() == periodoSelecionado.ano;
       });
     }
@@ -531,25 +585,34 @@ export default function Dashboard() {
             <span className="text-xs" style={{ color: 'var(--text-dim)' }}>{kpis.concluidas} finalizadas</span>
           </div>
           <div className="h-[280px] overflow-hidden relative group">
-            <div className="flex flex-col gap-3 absolute top-0 animate-scroll">
-              {[
-                ...etapas.filter(e => e.status === 'concluido' || e.status === 'concluido_atraso').sort((a, b) => new Date(b.dataReal) - new Date(a.dataReal)),
-                ...etapas.filter(e => e.status === 'concluido' || e.status === 'concluido_atraso').sort((a, b) => new Date(b.dataReal) - new Date(a.dataReal))
-              ].map((item, idx) => (
-                <div key={idx} className="flex items-center justify-between p-3 rounded-lg" style={{ background: 'rgba(53, 218, 179, 0.07)', border: '1px solid rgba(53, 218, 179, 0.1)'}}>
-                  <div className="flex items-center gap-3">
-                    <CheckCircle2 className="w-5 h-5" style={{ color: 'var(--accent)' }} />
-                    <div>
-                      <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>{item.nome}</p>
-                      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{item.area} • {item.executadoPor}</p>
+            {etapas.filter(e => e.status === 'concluido' || e.status === 'concluido_atraso').length === 0 ? (
+              <div className="flex items-center justify-center h-full">
+                <p className="text-sm text-center" style={{ color: 'var(--text-dim)' }}>Nenhuma atividade concluída ainda</p>
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-col gap-3 absolute top-0 animate-scroll">
+                  {etapas
+                    .filter(e => e.status === 'concluido' || e.status === 'concluido_atraso')
+                    .sort((a, b) => (new Date(b.dataReal) || 0) - (new Date(a.dataReal) || 0))
+                    .flatMap(item => [item, item]) // Duplica a lista para o efeito de scroll infinito
+                    .map((item, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-3 rounded-lg" style={{ background: 'rgba(53, 218, 179, 0.07)', border: '1px solid rgba(53, 218, 179, 0.1)'}}>
+                      <div className="flex items-center gap-3">
+                        <CheckCircle2 className="w-5 h-5" style={{ color: 'var(--accent)' }} />
+                        <div>
+                          <p className="text-sm font-medium" style={{ color: 'var(--text)' }}>{item.nome}</p>
+                          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{item.area} • {item.executadoPor}</p>
+                        </div>
+                      </div>
+                      <span className="text-xs font-mono" style={{ color: 'var(--text-dim)' }}>{item.dataReal ? new Date(item.dataReal).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit'}) : ''}</span>
                     </div>
-                  </div>
-                  <span className="text-xs font-mono" style={{ color: 'var(--text-dim)' }}>{item.dataReal ? new Date(item.dataReal).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit'}) : ''}</span>
+                  ))}
                 </div>
-              ))}
-            </div>
-            <div className="absolute top-0 left-0 w-full h-4 bg-gradient-to-b from-[var(--surface)] to-transparent pointer-events-none"></div>
-            <div className="absolute bottom-0 left-0 w-full h-4 bg-gradient-to-t from-[var(--surface)] to-transparent pointer-events-none"></div>
+                <div className="absolute top-0 left-0 w-full h-4 bg-gradient-to-b from-[var(--surface)] to-transparent pointer-events-none"></div>
+                <div className="absolute bottom-0 left-0 w-full h-4 bg-gradient-to-t from-[var(--surface)] to-transparent pointer-events-none"></div>
+              </>
+            )}
           </div>
         </div>
         <div className="card p-5">
@@ -850,7 +913,7 @@ export default function Dashboard() {
         }
         .animate-scroll {
           /* A duração é calculada com base no número de itens para manter uma velocidade constante */
-          animation: scroll ${kpis.concluidas * 2.5}s linear infinite;
+          animation: scroll ${Math.max(kpis.concluidas * 2.5, 10)}s linear infinite;
         }
         .group:hover .animate-scroll {
           animation-play-state: paused;
@@ -1532,7 +1595,7 @@ function ApoioDetailsModal({ apoiadorName, etapas, onClose }) {
   );
 }
 
-// Keep original processData and processRealtimeData functions unchanged
+// Função auxiliar para processar dados (Reutiliza lógica da Importação/Etapas)
 function processRealtimeData(data) {
   if (!data) return [];
   const dataArray = Array.isArray(data) ? data : Object.values(data);
@@ -1540,86 +1603,234 @@ function processRealtimeData(data) {
 }
 
 function processData(data, existingSteps = []) {
-  if (!Array.isArray(data)) return [];
+  const dataArray = Array.isArray(data) ? data : Object.values(data || {});
+  if (dataArray.length === 0) return [];
   const etapasValidadas = [];
   const chavesProcessadas = new Set();
-  const usedIds = new Set();
-  const normalizeVal = (str) => str ? String(str).trim().replace(/\s+/g, ' ').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") : '';
-  const headerMap = new Map();
-  if (data.length > 0) Object.keys(data[0]).forEach(k => headerMap.set(normalizeVal(k), k));
-  const existingByCodeAndName = new Map();
-  const existingByCode = new Map();
-  const existingByName = new Map();
-  existingSteps.forEach(e => {
-    const code = normalizeVal(e.codigo);
-    const name = normalizeVal(e.nome);
-    if (code && name) existingByCodeAndName.set(`${code}|${name}`, e);
-    if (code) { if (!existingByCode.has(code)) existingByCode.set(code, []); existingByCode.get(code).push(e); }
-    if (name) { if (!existingByName.has(name)) existingByName.set(name, []); existingByName.get(name).push(e); }
-  });
+  const usedIds = new Set(); // Rastreia IDs já vinculados para permitir códigos duplicados em tarefas diferentes
+
   const formatarData = (valor) => {
-    if (!valor || String(valor).trim() === '') return null;
-    const v = String(valor).trim();
-    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) return v;
-    const dmy = v.match(/^(\d{1,2})\/\-\.\/\-\.(?:[\sT]+(\d{1,2}):(\d{2}))?/);
-    if (dmy) {
-      const dia = parseInt(dmy[1],10), mes = parseInt(dmy[2],10);
-      let ano = parseInt(dmy[3],10);
-      const hora = dmy[4] ? parseInt(dmy[4],10) : 12, min = dmy[5] ? parseInt(dmy[5],10) : 0;
-      if (ano < 100) ano += 2000;
-      const date = new Date(ano, mes-1, dia, hora, min, 0);
-      if (!isNaN(date.getTime())) return date.toISOString();
+    if (valor === null || valor === undefined || String(valor).trim() === '') return null;
+
+    // 1. Número (Serial Excel)
+    if (typeof valor === 'number') {
+      const valorAjustado = Math.floor(valor + 0.001);
+      const date = new Date((valorAjustado - 25569) * 86400 * 1000 + 43200000);
+      return date.toISOString();
     }
-    if (typeof valor === 'number') { const date = new Date((Math.floor(valor+0.001)-25569)*86400*1000+43200000); return date.toISOString(); }
+    
+    if (typeof valor === 'string') {
+      const v = valor.trim();
+      
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) return v;
+      
+      // 2. Formato DD/MM/AAAA HH:mm (Estrito BR)
+      const dmy = v.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?/);
+      if (dmy) {
+        const dia = parseInt(dmy[1], 10);
+        const mes = parseInt(dmy[2], 10);
+        let ano = parseInt(dmy[3], 10);
+        const hora = dmy[4] ? parseInt(dmy[4], 10) : null;
+        const min = dmy[5] ? parseInt(dmy[5], 10) : null;
+        
+        if (ano < 100) ano += 2000;
+
+        if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) {
+             if (hora !== null) {
+               const date = new Date(ano, mes - 1, dia, hora, min || 0, 0);
+               if (!isNaN(date.getTime())) return date.toISOString();
+             } else {
+               const date = new Date(Date.UTC(ano, mes - 1, dia, 12, 0, 0));
+               if (!isNaN(date.getTime())) return date.toISOString();
+             }
+        }
+      }
+
+      // 3. Formato ISO YYYY-MM-DD HH:mm (ou similar)
+      const ymd = v.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})(?:[T\s](\d{1,2}):(\d{2}))?/);
+      if (ymd) {
+         const ano = parseInt(ymd[1], 10);
+         const mes = parseInt(ymd[2], 10);
+         const dia = parseInt(ymd[3], 10);
+         const hora = ymd[4] ? parseInt(ymd[4], 10) : null;
+         const min = ymd[5] ? parseInt(ymd[5], 10) : null;
+
+         if (hora !== null) {
+            const date = new Date(ano, mes - 1, dia, hora, min || 0, 0);
+            if (!isNaN(date.getTime())) return date.toISOString();
+         } else {
+            const date = new Date(Date.UTC(ano, mes - 1, dia, 12, 0, 0));
+            if (!isNaN(date.getTime())) return date.toISOString();
+         }
+      }
+    }
     return null;
   };
+
   const combinarDataHora = (dataISO, horaVal) => {
-    if (!dataISO || !horaVal) return dataISO;
+    if (!dataISO) return null;
+    if (horaVal === undefined || horaVal === null || String(horaVal).trim() === '') return dataISO;
+    
     const dt = new Date(dataISO);
-    let hours = 0, minutes = 0;
-    if (typeof horaVal === 'number') { const ts = Math.round(horaVal*86400); hours = Math.floor(ts/3600)%24; minutes = Math.floor((ts%3600)/60); }
-    else if (String(horaVal).includes(':')) { const p = String(horaVal).split(':'); hours = parseInt(p[0])||0; minutes = parseInt(p[1])||0; }
-    return new Date(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate(), hours, minutes).toISOString();
+    const year = dt.getUTCFullYear();
+    const month = dt.getUTCMonth();
+    const day = dt.getUTCDate();
+
+    let hours = 0;
+    let minutes = 0;
+
+    if (typeof horaVal === 'number') {
+      const totalSeconds = Math.round(horaVal * 86400);
+      hours = Math.floor(totalSeconds / 3600) % 24;
+      minutes = Math.floor((totalSeconds % 3600) / 60);
+    } else if (typeof horaVal === 'string') {
+      const v = horaVal.trim();
+      if (v.includes('T') || v.includes('-') || v.includes('/')) {
+        const timeDate = new Date(v);
+        if (!isNaN(timeDate.getTime())) {
+          hours = v.toUpperCase().includes('Z') ? timeDate.getUTCHours() : timeDate.getHours();
+          minutes = v.toUpperCase().includes('Z') ? timeDate.getUTCMinutes() : timeDate.getMinutes();
+        }
+      } else {
+        const parts = v.split(':');
+        if (parts.length >= 2) {
+          hours = parseInt(parts[0], 10) || 0;
+          minutes = parseInt(parts[1], 10) || 0;
+        }
+      }
+    }
+    
+    const localDate = new Date(year, month, day, hours, minutes, 0, 0);
+    return localDate.toISOString();
   };
-  data.forEach((row, index) => {
-    const getVal = (keys) => { for (const k of keys) { const nk = normalizeVal(k); const ak = headerMap.get(nk); const val = ak ? row[ak] : row[k]; if (val !== undefined && val !== null && String(val).trim() !== '') return val; } return undefined; };
-    const nome = getVal(['TAREFA','Nome','Etapa','tarefa','nome','etapa']);
-    const codigo = getVal(['CODIGO','ID','Code','codigo','id','code']);
+
+  dataArray.forEach((row, index) => {
+    const getVal = (keys) => {
+      const normalize = (k) => k
+        ? String(k).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim()
+        : '';
+      for (const k of keys) {
+        let val = row[k];
+        if (val === undefined) {
+          const target = normalize(k);
+          const foundKey = Object.keys(row).find(rk => normalize(rk) === target);
+          if (foundKey) val = row[foundKey];
+        }
+        if (val !== undefined && val !== null && String(val).trim() !== '') {
+          return val;
+        }
+      }
+      return undefined;
+    };
+
+    const nome = getVal(['TAREFA', 'tarefa', 'Nome', 'nome', 'Etapa', 'etapa', 'Etapas', 'etapas', 'Tarefas', 'tarefas', 'Atividade', 'atividade', 'Descrição', 'descricao', 'Item', 'item']);
+    const codigo = getVal(['CODIGO', 'codigo', 'CÓDIGO', 'código', 'Codigo', 'Código', 'Cod', 'COD', 'ID', 'Id', 'Code']);
+    
     if (!nome) return;
-    const codeVal = normalizeVal(codigo), nameVal = normalizeVal(nome);
-    const uniqueKey = `${codeVal}|${nameVal}`;
+
+    const normalizeVal = (str) => str ? String(str).trim().replace(/\s+/g, ' ').toLowerCase() : '';
+    const uniqueKey = `${codigo ? 'code:' + normalizeVal(codigo) : ''}|name:${normalizeVal(nome)}`;
+    
     if (chavesProcessadas.has(uniqueKey)) return;
     chavesProcessadas.add(uniqueKey);
-    let existing = existingByCodeAndName.get(uniqueKey);
-    if (!existing && codeVal) existing = (existingByCode.get(codeVal)||[]).find(e => !usedIds.has(e.id));
-    if (!existing && nameVal) existing = (existingByName.get(nameVal)||[]).find(e => !usedIds.has(e.id));
-    if (existing) usedIds.add(existing.id);
-    let dataPrevista = formatarData(getVal(['INÍCIO','Data Prevista','início','inicio','dataPrevista']));
-    dataPrevista = combinarDataHora(dataPrevista, getVal(['HORA INICIO','hora inicio','Hora Início']));
-    let dataReal = formatarData(getVal(['TÉRMINO','Data Real','término','termino','dataReal']));
-    dataReal = combinarDataHora(dataReal, getVal(['HORA TÉRMINO','hora término','hora termino']));
+
+    const existing = existingSteps.find(e => {
+      if (usedIds.has(e.id)) return false;
+
+      const normalize = (str) => str ? String(str).trim().replace(/\s+/g, ' ').toLowerCase() : '';
+      const codeA = normalize(codigo);
+      const codeB = normalize(e.codigo);
+      const nameA = normalize(nome);
+      const nameB = normalize(e.nome);
+
+      if (codeA && codeB && codeA === codeB && nameA === nameB) return true;
+      if (codeA && codeB && codeA === codeB) return true;
+      if (nameA === nameB) {
+        if (codeA && codeB && codeA !== codeB) return false;
+        return true;
+      }
+
+      return false;
+    });
+
+    if (existing) {
+      usedIds.add(existing.id);
+    }
+
+    let rawOrdem = getVal(['D+', 'd+', 'Ordem', 'ordem', 'Dia', 'dia']);
+    let ordem = parseInt(rawOrdem);
+    if (isNaN(ordem) && typeof rawOrdem === 'string') {
+       const match = rawOrdem.match(/\d+/);
+       if (match) ordem = parseInt(match[0]);
+    }
+    if (isNaN(ordem)) ordem = index + 1;
+
+    let dataPrevista = formatarData(getVal(['INÍCIO', 'início', 'inicio', 'Data Prevista', 'dataPrevista', 'Data de Início', 'Data de Inicio', 'Previsão', 'Previsao', 'Data', 'Date', 'Start', 'Planejado', 'Data Planejada']));
+    const horaInicio = getVal(['HORA INICIO', 'Hora Inicio', 'hora inicio', 'Hora Início']);
+    dataPrevista = combinarDataHora(dataPrevista, horaInicio);
+    
+    let rawDataReal = getVal(['TÉRMINO', 'término', 'termino', 'Data Real', 'dataReal', 'Data Conclusão', 'Data Conclusao', 'Conclusão', 'Conclusao', 'Realizado', 'Executado', 'Fim', 'Data de Término', 'Data de Termino', 'Data Fim', 'Data Final', 'End']);
+
+    let dataReal = formatarData(rawDataReal);
+    const horaTermino = getVal(['HORA TÉRMINO', 'Hora Término', 'hora término', 'HORA TERMICA', 'Hora Termica']);
+    dataReal = combinarDataHora(dataReal, horaTermino);
+    
+    // Lógica de Status Corrigida
     let status = 'pendente';
-    const rawStatus = getVal(['STATUS','Situação','Estado']);
+    const now = new Date();
+
+    let rawStatus = getVal(['STATUS', 'Status', 'status', 'SITUAÇÃO', 'Situação', 'situacao', 'Estado', 'estado']);
+    
     const statusStr = rawStatus ? String(rawStatus).toLowerCase() : '';
-    if (dataReal || statusStr.includes('conclu')) {
-      const isLateByDate = dataReal && dataPrevista && new Date(dataReal) > new Date(dataPrevista);
-      status = (isLateByDate || statusStr.includes('atraso')) ? 'concluido_atraso' : 'concluido';
-    } else if (dataPrevista && new Date(dataPrevista) < new Date()) { status = 'atrasado'; }
-    if (!status.startsWith('concluido') && statusStr.includes('atras')) status = 'atrasado';
-    else if (!status.startsWith('concluido') && statusStr.includes('andamento')) status = 'em_andamento';
+    const hasDataReal = dataReal !== null && dataReal !== undefined;
+    const isExplicitlyConcluido = statusStr.includes('conclu');
+
+    if (hasDataReal || isExplicitlyConcluido) {
+        status = 'concluido';
+        if (dataReal && dataPrevista && new Date(dataReal) > new Date(dataPrevista)) {
+            status = 'concluido_atraso';
+        }
+    } else {
+        if (dataPrevista && new Date(dataPrevista) < now) {
+            status = 'atrasado';
+        } else if (statusStr.includes('andamento')) {
+            status = 'em_andamento';
+        } else {
+            status = 'pendente';
+        }
+
+        if (statusStr.includes('atras')) {
+            status = 'atrasado';
+        }
+    }
+
+    let concluidoEm = existing?.concluidoEm || null;
+    let quemConcluiu = existing?.quemConcluiu || null;
+
+    if (status === 'concluido') {
+      if (!quemConcluiu) quemConcluiu = 'Importação Automática';
+      if (!dataReal) dataReal = dataPrevista || new Date().toISOString();
+      concluidoEm = dataReal;
+    }
+
     etapasValidadas.push({
-      id: existing?.id || null,
-      nome,
-      codigo: String(codigo || ''),
-      area: getVal(['ÁREA', 'área', 'area']) || '',
-      responsavel: getVal(['ATRIBUÍDO PARA', 'atribuído para', 'responsável', 'responsavel']) || '',
-      status,
-      dataPrevista,
-      dataReal,
-      ordem: parseInt(getVal(['D+', 'ordem', 'Ordem'])) || index + 1,
+      id: existing ? existing.id : null,
+      nome: nome,
+      descricao: getVal(['Descrição', 'descricao']) || '',
+      area: getVal(['ÁREA', 'área', 'area', 'Área']) || '',
+      responsavel: getVal(['ATRIBUÍDO PARA', 'atribuído para', 'atribuido para', 'Responsável', 'responsavel', 'Responsavel', 'Owner']) || '',
+      dataPrevista: dataPrevista,
+      dataReal: dataReal,
+      ordem: ordem,
+      codigo: (codigo !== undefined && codigo !== null) ? String(codigo) : '',
+      observacoes: getVal(['Observações', 'observacoes', 'Observação', 'observação', 'Observacao', 'observacao', 'OBSERVAÇÃO', 'Obs', 'obs']) || '',
+      status: status,
+      concluidoEm: concluidoEm || null,
+      quemConcluiu: quemConcluiu || null,
       executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPOr', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || '',
-      observacoes: getVal(['Observações', 'observações', 'obs']) || ''
+      ponto: getVal(['PONTO', 'ponto', 'Ponto']) || ''
     });
   });
+
   return etapasValidadas;
 }

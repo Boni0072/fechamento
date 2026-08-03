@@ -21,6 +21,7 @@ export const AuthProvider = ({ children }) => {
           setEmpresaAtual(null);
           setEmpresas([]);
           localStorage.removeItem('empresaAtualId');
+          localStorage.removeItem('visaoConsolidada');
           setLoading(false);
           return;
         }
@@ -104,10 +105,33 @@ export const AuthProvider = ({ children }) => {
 
         // 3. Determine the company to load
         const savedEmpresaId = localStorage.getItem('empresaAtualId');
-        let companyToLoad = validEmpresas.find(e => e.id === savedEmpresaId) || validEmpresas[0] || null;
+        // Se o usuário estava na "Visão Consolidada", mantém a visão consolidada após recarregar
+        const isConsolidatedView = localStorage.getItem('visaoConsolidada') === 'true';
+        let companyToLoad = null;
+        
+        if (!isConsolidatedView) {
+          companyToLoad = validEmpresas.find(e => e.id === savedEmpresaId) || validEmpresas[0] || null;
+        }
         
         if (!companyToLoad) {
           setEmpresaAtual(null);
+          // Se está na visão consolidada, carrega o perfil base com permissões do diretório global
+          if (isConsolidatedView) {
+            try {
+              const userDirSnapFresh = await getDoc(userDirRef);
+              if (userDirSnapFresh.exists()) {
+                const dirData = userDirSnapFresh.data();
+                currentUserData = {
+                  ...currentUserData,
+                  perfilAcesso: dirData.perfilAcesso || 'Master',
+                  paginasAcesso: dirData.paginasAcesso || ['dashboard', 'empresas', 'etapas', 'importacao', 'relatorios', 'historico', 'cadastros', 'notificacoes', 'fluxograma', 'usuarios'],
+                };
+              }
+            } catch (e) {
+              console.error("Erro ao carregar permissões globais:", e);
+            }
+          }
+          setUser(currentUserData);
           setLoading(false);
           return;
         }
@@ -166,6 +190,7 @@ export const AuthProvider = ({ children }) => {
       setEmpresaAtual(null);
       setEmpresas([]);
       localStorage.removeItem('empresaAtualId');
+      localStorage.removeItem('visaoConsolidada');
     } catch (error) {
       console.error('Erro ao fazer logout:', error);
       throw error;
@@ -209,7 +234,39 @@ export const AuthProvider = ({ children }) => {
   };
 
   const selecionarEmpresa = async (empresa) => {
-    if (!user || !empresa || empresa.id === empresaAtual?.id) {
+    if (!user) {
+      return;
+    }
+
+    // Caso "Visão Consolidada" (empresa === null)
+    if (!empresa) {
+      // Se já está na visão consolidada, não faz nada
+      if (!empresaAtual) {
+        return;
+      }
+      setLoading(true);
+      // Limpa a empresa atual e o localStorage
+      localStorage.removeItem('empresaAtualId');
+      // Marca que o usuário está na visão consolidada
+      localStorage.setItem('visaoConsolidada', 'true');
+      setEmpresaAtual(null);
+      // Restaura o usuário base (sem dados de perfil específico da empresa)
+      // Preserva perfilAcesso e paginasAcesso para manter as permissões na visão consolidada
+      const baseUser = {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        photoURL: user.photoURL,
+        perfilAcesso: user.perfilAcesso,
+        paginasAcesso: user.paginasAcesso,
+      };
+      setUser(baseUser);
+      setLoading(false);
+      return;
+    }
+
+    // Se a empresa selecionada é a mesma, não faz nada
+    if (empresa.id === empresaAtual?.id) {
       return;
     }
 
@@ -217,6 +274,7 @@ export const AuthProvider = ({ children }) => {
     
     // 1. Update localStorage and state
     localStorage.setItem('empresaAtualId', empresa.id);
+    localStorage.removeItem('visaoConsolidada');
     setEmpresaAtual(empresa);
 
     const userId = user.id;
