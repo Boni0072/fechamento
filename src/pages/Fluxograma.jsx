@@ -93,7 +93,7 @@ const TaskCarousel = ({ tasks, setEtapaSelecionada }) => {
   }
 
   return (
-    <div className="relative w-full h-full flex items-center justify-center p-2 overflow-hidden">
+    <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
       <button 
         ref={cardRef}
         key={etapa.id}
@@ -247,7 +247,7 @@ export default function Fluxograma() {
   const renderHeader = useCallback(({ date }) => {
     const dateStr = format(date, 'yyyy-MM-dd');
     const count = etapas.filter(e => e.dataPrevista && format(new Date(e.dataPrevista), 'yyyy-MM-dd') === dateStr).length;
-    return <div className="text-[10px] lg:text-xs font-normal text-slate-500 mt-0.5 lg:mt-1">{count} etapa{count !== 1 && 's'}</div>;
+    return <div className="text-[10px] lg:text-xs font-normal text-slate-500 mt-0.5">{count} etapa{count !== 1 && 's'}</div>;
   }, [etapas]);
 
   useEffect(() => {

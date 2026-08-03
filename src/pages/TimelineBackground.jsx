@@ -125,14 +125,14 @@ const TimelineBackground = forwardRef(({
             style={{ width: larguraColuna, minWidth: larguraColuna }}
             className={`flex flex-col border-r border-slate-200 shrink-0 z-10 ${isToday ? 'bg-blue-100' : 'bg-transparent'}`}
           >
-            <div className={`sticky top-0 z-20 py-2 lg:py-3 px-1 text-center border-b border-slate-400 font-semibold shadow-sm ${isToday ? 'bg-blue-200 text-blue-800' : 'bg-slate-50 text-slate-700'}`}>
+            <div className={`sticky top-0 z-20 h-[49px] px-1 text-center border-b border-slate-400 font-semibold shadow-sm flex flex-col items-center justify-center overflow-hidden ${isToday ? 'bg-blue-200 text-blue-800' : 'bg-slate-50 text-slate-700'}`}>
               <div className="text-[11px] lg:text-sm leading-tight">{format(dia, "dd 'de' MMM", { locale: ptBR })}</div>
               {renderHeader && renderHeader({ date: dia })}
             </div>
             
             <div className="flex flex-col relative">
               {horas.map(hora => (
-                <div key={hora} style={{ height: `${currentAlturaSlot}px` }} className={`border-b border-slate-100 p-1 relative transition-colors group ${isToday ? 'hover:bg-blue-200' : 'hover:bg-slate-50'}`}>
+                <div key={hora} style={{ height: `${currentAlturaSlot}px` }} className={`border-b border-slate-100 relative transition-colors group ${isToday ? 'hover:bg-blue-200' : 'hover:bg-slate-50'}`}>
                   {renderSlot && renderSlot({ date: dia, hour: hora })}
                 </div>
               ))}
