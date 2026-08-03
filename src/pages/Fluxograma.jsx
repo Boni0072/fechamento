@@ -79,7 +79,7 @@ const TaskCarousel = ({ tasks, setEtapaSelecionada }) => {
         if (sideBar) sideBar.style.backgroundColor = ''; // Limpa a cor da barra
       }
     };
-  }, [isLate]);
+  }, [isLate, currentIndex]);
 
   let borderColor = 'bg-slate-300';
   if (status === 'concluido' || status === 'concluído' || status.includes('concluido')) {
