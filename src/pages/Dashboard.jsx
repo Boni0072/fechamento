@@ -1545,7 +1545,11 @@ function GargalosDetailsModal({ areaName, etapas, onClose }) {
 }
 
 function ApoioDetailsModal({ apoiadorName, etapas, onClose }) {
-  const filtered = etapas.filter(e => e.executadoPor === apoiadorName);
+  const filtered = etapas.filter(e => 
+    e.executadoPor === apoiadorName && 
+    e.responsavel && 
+    e.executadoPor.trim().toLowerCase() !== e.responsavel.trim().toLowerCase()
+  );
   const calcularAtraso = (p, r) => { if (!p || !r) return '-'; const d = new Date(r) - new Date(p); if (d <= 0) return '-'; return `${Math.floor(d / (1000*60*60))}h ${Math.floor((d % (1000*60*60*60)) / (1000*60))}m`; };
   
   return (
