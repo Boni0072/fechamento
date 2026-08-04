@@ -726,21 +726,29 @@ export default function Dashboard() {
           ) : (
             <>
               <div className="flex items-end justify-center gap-4 h-36 pt-2 mb-4">
-                {['silver','gold','bronze'].map((tier, idx) => {
-                  const person = kpis.rankingApoio[idx];
-                  if (!person) return <div key={tier} className="flex-1" />;
-                  const heights = [55, 75, 40];
+                {(() => {
+                  const podiumOrder = [1, 0, 2]; // 2º lugar, 1º lugar, 3º lugar
+                  const podiumData = podiumOrder.map(index => kpis.rankingApoio[index]);
+                  const heights = [55, 75, 40]; // Altura para 2º, 1º, 3º
+                  const colors = [
+                    { bg: 'linear-gradient(180deg, #35dab3, rgba(53,218,179,0.3))', border: '#35dab3', text: 'var(--accent)' }, // 2º (silver/prata, mas usando accent)
+                    { bg: 'linear-gradient(180deg, #f5b64d, rgba(245,182,77,0.3))', border: '#f5b64d', text: 'var(--warning)' }, // 1º (gold/ouro)
+                    { bg: 'linear-gradient(180deg, #7c9cff, rgba(124,156,255,0.3))', border: '#7c9cff', text: 'var(--info)' },    // 3º (bronze, mas usando info)
+                  ];
                   
-                  return (
-                    <div key={tier} className="flex flex-col items-center flex-1 group">
+                  return podiumData.map((person, index) => {
+                    if (!person) return <div key={index} className="flex-1" />;
+                    const podiumIndex = podiumOrder[index]; // 0, 1, ou 2
+                    return (
+                      <div key={person.nome} className="flex flex-col items-center flex-1 group">
                       <span className="text-[10px] font-medium text-center mb-1" style={{ color: 'var(--text-muted)' }}>{person.nome.split(' ')[0]}</span>
-                      <div className="w-full rounded-t-lg transition-all group-hover:opacity-90 flex items-end justify-center pb-2" style={{ height: `${heights[idx]}px`, background: idx === 1 ? 'linear-gradient(180deg, #f5b64d, rgba(245,182,77,0.3))' : idx === 0 ? 'linear-gradient(180deg, #35dab3, rgba(53,218,179,0.3))' : 'linear-gradient(180deg, #7c9cff, rgba(124,156,255,0.3))', borderTop: `3px solid ${idx === 1 ? '#f5b64d' : idx === 0 ? '#35dab3' : '#7c9cff'}` }}>
-                        <span className="text-xl font-bold" style={{ fontFamily: 'var(--font-display)', color: idx === 0 ? 'var(--accent)' : idx === 1 ? 'var(--warning)' : 'var(--info)' }}>{idx+1}</span>
+                      <div className="w-full rounded-t-lg transition-all group-hover:opacity-90 flex items-end justify-center pb-2" style={{ height: `${heights[index]}px`, background: colors[index].bg, borderTop: `3px solid ${colors[index].border}` }}>
+                        <span className="text-xl font-bold" style={{ fontFamily: 'var(--font-display)', color: colors[index].text }}>{podiumIndex + 1}</span>
                       </div>
                       <span className="text-[10px] mt-1" style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>{person.count} t.</span>
                     </div>
-                  );
-                })}
+                  )});
+                })()}
               </div>
               <div className="flex flex-col gap-2">
                 {kpis.rankingApoio.slice(0, 5).map((item, index) => (
@@ -1828,7 +1836,7 @@ function processData(data, existingSteps = []) {
       concluidoEm: concluidoEm || null,
       quemConcluiu: quemConcluiu || null,
       executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPOr', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || '',
-      ponto: getVal(['PONTO', 'ponto', 'Ponto']) || ''
+      ...row // Mantém todos os campos originais da linha, incluindo PONTO, PONTO_ALVO, etc.
     });
   });
 

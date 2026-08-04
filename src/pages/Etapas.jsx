@@ -1259,7 +1259,7 @@ function processData(data, existingSteps = []) {
       concluidoEm: concluidoEm || null,
       quemConcluiu: quemConcluiu || null,
       executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPor', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || '',
-      ponto: getVal(['PONTO', 'ponto', 'Ponto']) || ''
+      ...row // Mantém todos os campos originais da linha, incluindo PONTO, PONTO_ALVO, etc.
     });
   });
 
