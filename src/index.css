@@ -36,6 +36,40 @@
   --font-mono: "JetBrains Mono", monospace;
 }
 
+[data-theme="light"] {
+  --bg: #f5f7fa;
+  --sidebar: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f0f2f5;
+  --border: rgba(0,0,0,0.08);
+  --border-strong: rgba(0,0,0,0.15);
+  --text: #1a1d23;
+  --text-muted: #5a6373;
+  --text-dim: #9aa3b3;
+  --accent: #0d9b7a;
+  --accent-2: #1a8bb8;
+  --accent-soft: rgba(13,155,122,0.12);
+  --accent-glow: rgba(13,155,122,0.25);
+  --danger: #e53e3e;
+  --danger-soft: rgba(229,62,62,0.12);
+  --warning: #d97706;
+  --warning-soft: rgba(217,119,6,0.12);
+  --info: #4f6fff;
+  --info-soft: rgba(79,111,255,0.12);
+  --success: #0d9b7a;
+  --success-soft: rgba(13,155,122,0.12);
+}
+
+[data-theme="light"] body {
+  background:
+    radial-gradient(1100px 600px at 85% -10%, rgba(13,155,122,0.08), transparent 60%),
+    radial-gradient(900px 500px at -5% 20%, rgba(79,111,255,0.05), transparent 55%),
+    var(--bg);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); }
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.25); }
+
 * {
   margin: 0;
   padding: 0;
@@ -415,4 +449,28 @@ a:hover {
 /* Fonte aumentada */
 .fonte-aumentada {
   font-size: 1.2em;
+}
+
+/* Theme toggle button */
+.theme-toggle {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  z-index: 50;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.theme-toggle:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
 }

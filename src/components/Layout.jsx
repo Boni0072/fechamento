@@ -7,6 +7,7 @@ import { database, ref, firestore } from '../firebase';
 import { doc, collection, getDocs, writeBatch, setDoc } from 'firebase/firestore';
 import * as XLSX from 'xlsx';
 import { RefreshCw } from 'lucide-react';
+import ThemeToggle from '../components/ThemeToggle';
 import { format } from 'date-fns';
 
 export default function Layout() {
@@ -153,6 +154,7 @@ export default function Layout() {
             )}
           </div>
           <div className="flex items-center gap-3">
+            <ThemeToggle />
             {empresaAtual?.spreadsheetId && (
               <>
                 <label className="flex items-center gap-1.5 cursor-pointer select-none text-xs">
