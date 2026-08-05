@@ -293,6 +293,40 @@ export default function Notificacoes() {
     setShowEmailModal(false);
   };
 
+  const handleSendGlobalSummaryEmail = () => {
+    const usersWithEmail = notificationsByUser.filter(u => u.email);
+    if (usersWithEmail.length === 0) {
+      alert("Nenhum responsável com e-mail válido encontrado para o envio.");
+      return;
+    }
+    const recipients = usersWithEmail.map(u => u.email).join(',');
+
+    const subject = encodeURIComponent(`Resumo Geral de Pendências - Fechamento Contábil`);
+
+    let body = `Olá a todos,\n\nSegue um resumo geral de todas as atividades pendentes no fechamento contábil.\n\n`;
+
+    // Constrói o corpo do e-mail com listas diretas, sem agrupar por responsável.
+    if (etapasAtrasadas.length > 0) {
+      body += `🔴 ETAPAS ATRASADAS (${etapasAtrasadas.length}):\n`;
+      etapasAtrasadas.sort((a, b) => new Date(a.dataPrevista) - new Date(b.dataPrevista)).forEach(e => {
+        const dataVencimento = e.dataPrevista ? format(new Date(e.dataPrevista), 'dd/MM/yyyy') : 'N/A';
+        body += `  - ${e.codigo || ''} ${e.nome} (Responsável: ${e.responsavel || 'N/D'}, Venceu em: ${dataVencimento})\n`;
+      });
+      body += '\n';
+    }
+
+    if (etapasProximasPrazo.length > 0) {
+      body += `⚠️ PRÓXIMAS DO PRAZO (${etapasProximasPrazo.length}):\n`;
+      etapasProximasPrazo.sort((a, b) => new Date(a.dataPrevista) - new Date(b.dataPrevista)).forEach(e => {
+        const dataVencimento = e.dataPrevista ? format(new Date(e.dataPrevista), 'dd/MM/yyyy') : 'N/A';
+        body += `  - ${e.codigo || ''} ${e.nome} (Responsável: ${e.responsavel || 'N/D'}, Vence em: ${dataVencimento})\n`;
+      });
+      body += '\n';
+    }
+
+    window.location.href = `mailto:?bcc=${recipients}&subject=${subject}&body=${encodeURIComponent(body)}`;
+  };
+
   const handleSendMassEmail = () => {
     const usersWithEmail = notificationsByUser.filter(u => u.email);
 
@@ -674,15 +708,15 @@ export default function Notificacoes() {
                   Enviar Individualmente
                 </button>
                 <button onClick={() => setShowEmailModal(false)} className="p-2 rounded-full transition-colors">
-                  <X className="w-5 h-5" style={{ color: 'var(--text-dim)' }} />
+                  <X className="w-5 h-5" style={{ color: 'var(--text-dim)' }}/>
                 </button>
                 <button
-                  onClick={handleSendMassEmail}
+                  onClick={handleSendGlobalSummaryEmail}
                   className="btn btn-primary text-sm font-medium"
-                  title="Abre um único e-mail com todos os destinatários em cópia oculta"
+                  title="Abre um único e-mail com todas as atividades de todos os responsáveis, enviado em cópia oculta para todos"
                 >
                   <Send className="w-4 h-4" />
-                  <X className="w-5 h-5" style={{ color: 'var(--text-dim)' }} />
+                  Enviar Alerta Geral
                 </button>
               </div>
             </div>
@@ -880,10 +914,13 @@ function processData(data) {
 
     const responsavel = getVal(['ATRIBUÍDO PARA', 'atribuído para', 'atribuido para', 'Responsável', 'responsavel', 'Responsavel', 'Owner']) || '';
     const area = getVal(['ÁREA', 'área', 'area', 'Área']) || '';
-    const executadoPor = getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPor', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || '';
+    const quemConcluiu = getVal(['quemConcluiu', 'Quem Concluiu', 'quem concluiu']);
+    const executadoPor = getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPor', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || quemConcluiu || '';
 
     etapasValidadas.push({
-      ...row, nome, codigo, dataPrevista, dataReal, status, responsavel, area, executadoPor
+      ...row, nome, codigo, dataPrevista, dataReal, status, responsavel, area, 
+      executadoPor: executadoPor || quemConcluiu || '',
+      ...row
     });
   });
 

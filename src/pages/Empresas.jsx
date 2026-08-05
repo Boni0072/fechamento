@@ -1612,7 +1612,7 @@ const processData = (data) => {
       ordem: ordem,
       codigo: String(getVal(['CODIGO', 'codigo', 'CÓDIGO', 'código']) || ''),
       status: status,
-      executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por']) || ''
+      executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPor', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || quemConcluiu || ''
     });
   });
 
