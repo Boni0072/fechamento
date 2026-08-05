@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from '../pages/Sidebar';
 import { useAuth } from '../contexts/AuthContext';
-import { set } from 'firebase/database';
+import { set, get } from 'firebase/database';
 import { database, ref, firestore } from '../firebase';
 import { doc, collection, getDocs, writeBatch, setDoc } from 'firebase/firestore';
 import * as XLSX from 'xlsx';
@@ -114,7 +114,62 @@ export default function Layout() {
       }));
 
       if (database) {
-        await set(ref(database, `tenants/${empresaAtual.id}/tabelaGoogle`), processedDataForDb);
+        // Preserva campos definidos localmente (executadoPor, STATUS, TÉRMINO, Observações, PONTO, etc.)
+        // que foram setados pelo botão "Concluir" e não existem na planilha do Google Sheets
+        const existingDataRef = ref(database, `tenants/${empresaAtual.id}/tabelaGoogle`);
+        let existingData = [];
+        try {
+          const existingSnapshot = await get(existingDataRef);
+          existingData = existingSnapshot.val() || [];
+        } catch (e) {
+          console.warn('[AutoSync] Não foi possível ler dados existentes do RTDB:', e);
+        }
+
+        const mergedData = processedDataForDb.map((newRow, index) => {
+          const existingRow = existingData[index];
+          if (!existingRow) return newRow;
+
+          // Lista de campos que podem ter sido definidos localmente pelo botão "Concluir"
+          // e que devem ser preservados se a planilha não os tiver
+          const fieldsToPreserve = [
+            'executadoPor',
+            'status',
+            'dataReal',
+            'concluidoEm',
+            'quemConcluiu',
+            'observacoes'
+          ];
+
+          fieldsToPreserve.forEach(field => {
+            if ((!newRow[field] || String(newRow[field]).trim() === '') && existingRow[field]) {
+              newRow[field] = existingRow[field];
+            }
+          });
+
+          // Preserva campos originais (uppercase) que o Etapas.jsx usa para salvar no RTDB
+          const originalFieldsToPreserve = [
+            'EXECUTADO POR',
+            'STATUS',
+            'TÉRMINO',
+            'Observações',
+            'PONTO',
+            'PONTO_ALVO',
+            'PONTO_TIPO',
+            'PONTO_OPOSTO',
+            'PONTO_OPOSTO_ALVO',
+            'PONTO_OPOSTO_TIPO'
+          ];
+
+          originalFieldsToPreserve.forEach(field => {
+            if ((!newRow[field] || String(newRow[field]).trim() === '') && existingRow[field]) {
+              newRow[field] = existingRow[field];
+            }
+          });
+
+          return newRow;
+        });
+
+        await set(ref(database, `tenants/${empresaAtual.id}/tabelaGoogle`), mergedData);
         lastSyncedDataJson.current = processedDataJson; // Atualiza o cache de dados processados
       }
       setSyncState({ status: 'success', message: `${totalStepsSynced} etapas em ${Object.keys(rawTasksByPeriod).length} períodos`, lastSync: new Date() });

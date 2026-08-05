@@ -8,7 +8,7 @@ import { getEtapas, getStatusColor, getStatusLabel } from '../services/database'
 import { Clock, AlertTriangle, Activity, Target, X, Info, RefreshCw, ChevronDown, ChevronUp, Trophy, Maximize2, Minimize2, CheckCircle2, ListChecks, Mail, Send } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
-import { ref, onValue, set } from "firebase/database";
+import { ref, onValue, set, get } from "firebase/database";
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -361,7 +361,34 @@ export default function Dashboard() {
           return processedSteps.length;
         }));
         totalPeriodsProcessed += Object.keys(rawTasksByPeriod).length;
-        await set(ref(database, `tenants/${emp.id}/tabelaGoogle`), processData(data));
+        // Preserva campos definidos localmente (executadoPor, STATUS, TÉRMINO, etc.)
+        const newData = processData(data);
+        const existingDataRef = ref(database, `tenants/${emp.id}/tabelaGoogle`);
+        let existingData = [];
+        try {
+          const existingSnapshot = await get(existingDataRef);
+          existingData = existingSnapshot.val() || [];
+        } catch (e) {
+          console.warn('[Sync] Não foi possível ler dados existentes do RTDB:', e);
+        }
+        const mergedData = newData.map((newRow, index) => {
+          const existingRow = existingData[index];
+          if (!existingRow) return newRow;
+          const fieldsToPreserve = ['executadoPor', 'status', 'dataReal', 'concluidoEm', 'quemConcluiu', 'observacoes'];
+          fieldsToPreserve.forEach(field => {
+            if ((!newRow[field] || String(newRow[field]).trim() === '') && existingRow[field]) {
+              newRow[field] = existingRow[field];
+            }
+          });
+          const originalFieldsToPreserve = ['EXECUTADO POR', 'STATUS', 'TÉRMINO', 'Observações', 'PONTO', 'PONTO_ALVO', 'PONTO_TIPO', 'PONTO_OPOSTO', 'PONTO_OPOSTO_ALVO', 'PONTO_OPOSTO_TIPO'];
+          originalFieldsToPreserve.forEach(field => {
+            if ((!newRow[field] || String(newRow[field]).trim() === '') && existingRow[field]) {
+              newRow[field] = existingRow[field];
+            }
+          });
+          return newRow;
+        });
+        await set(ref(database, `tenants/${emp.id}/tabelaGoogle`), mergedData);
       });
       const results = await Promise.all(syncPromises);
       globalTotalOps = results.reduce((a, b) => a + b, 0);
@@ -1826,6 +1853,7 @@ function processData(data, existingSteps = []) {
     }
 
     etapasValidadas.push({
+      ...row, // Mantém campos originais PRIMEIRO (PONTO, PONTO_ALVO, etc.)
       id: existing ? existing.id : null,
       nome: nome,
       descricao: getVal(['Descrição', 'descricao']) || '',
@@ -1839,7 +1867,7 @@ function processData(data, existingSteps = []) {
       status: status,
       concluidoEm: concluidoEm || null,
       quemConcluiu: quemConcluiu || null,
-      executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPOr', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || '',
+      executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPOr', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado', 'ExecutadoPOr']) || '',
       ...row // Mantém todos os campos originais da linha, incluindo PONTO, PONTO_ALVO, etc.
     });
   });

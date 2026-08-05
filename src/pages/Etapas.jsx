@@ -185,27 +185,33 @@ export default function Etapas() {
 
   const handleConcluirEtapa = async (e, etapa) => {
     e.stopPropagation(); // Prevent modal from opening
-    if (etapa._originalIndex === undefined) {
+    if (etapa._originalIndex === undefined && !etapa._idManual) {
       alert("Erro: Não foi possível identificar a etapa original para atualizar.");
       return;
     }
     if (!empresaAtual?.id) return;
 
     const db = getDatabase();
-    // Otimização: Referencia diretamente o item no array do RTDB
-    const itemRef = ref(db, `tenants/${empresaAtual.id}/tabelaGoogle/${etapa._originalIndex}`);
+    // Define o caminho correto no RTDB com base na origem da etapa
+    const itemRef = etapa._fonte === 'manual' && etapa._idManual
+      ? ref(db, `tenants/${empresaAtual.id}/etapasManuais/${etapa._idManual}`)
+      : ref(db, `tenants/${empresaAtual.id}/tabelaGoogle/${etapa._originalIndex}`);
 
     try {
       const itemToUpdate = { ...etapa }; // Usa a etapa do estado, que já é a mais recente
 
-      const status = (itemToUpdate['STATUS'] || '').toLowerCase();
-      const isConcluido = status.includes('conclu');
+      // Usa etapa.status (processado) com fallback em STATUS (original) para compatibilidade
+      const currentStatus = (etapa.status || itemToUpdate['STATUS'] || '').toLowerCase();
+      const isConcluido = currentStatus.includes('conclu');
 
       if (isConcluido) {
         if (window.confirm("Esta etapa já está concluída. Deseja marcá-la como pendente novamente?")) {
           delete itemToUpdate['TÉRMINO'];
           delete itemToUpdate['EXECUTADO POR'];
           itemToUpdate['STATUS'] = 'Pendente';
+          itemToUpdate['status'] = 'pendente';
+          itemToUpdate['executadoPor'] = '';
+          itemToUpdate['dataReal'] = '';
         } else {
           return; // User cancelled
         }
@@ -214,8 +220,12 @@ export default function Etapas() {
         const datePart = now.toLocaleDateString('pt-BR');
         const timePart = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
         itemToUpdate['TÉRMINO'] = `${datePart} ${timePart}`;
-        itemToUpdate['EXECUTADO POR'] = userProfile?.nome || authUser?.email || 'Sistema';
+        // Fix: Busca o nome em ambos os campos (nome/name) com fallback para email
+        const executorName = userProfile?.nome || userProfile?.name || authUser?.name || authUser?.displayName || authUser?.email || 'Sistema';
+        itemToUpdate['EXECUTADO POR'] = executorName;
+        itemToUpdate['executadoPor'] = executorName;
         itemToUpdate['STATUS'] = 'Concluído';
+        itemToUpdate['status'] = 'concluido';
       }
 
       // 1. Otimização: Atualiza apenas o item específico no Realtime Database
@@ -241,8 +251,42 @@ export default function Etapas() {
   };
 
   const handleSalvarObservacao = async () => {
-    if (!etapaDetalhe || etapaDetalhe._originalIndex === undefined) return;
+    if (!etapaDetalhe) return;
     const db = getDatabase();
+
+    // Etapa manual: salva diretamente no nó etapasManuais
+    if (etapaDetalhe._fonte === 'manual' && etapaDetalhe._idManual) {
+      const manualItemRef = ref(db, `tenants/${empresaAtual.id}/etapasManuais/${etapaDetalhe._idManual}`);
+      const snapshot = await get(manualItemRef);
+      const itemData = snapshot.val() || {};
+      itemData['Observações'] = observacaoModal;
+
+      if (pontoModal && pontoAlvo) {
+        const pontoPrincipal = pontoModal === 'positivo' ? 'Positivo' : 'Negativo';
+        const pontoOposto = pontoModal === 'positivo' ? 'Negativo' : 'Positivo';
+        const nomeAlvo = pontoAlvo === 'responsavel' ? etapaDetalhe.responsavel : etapaDetalhe.executadoPor;
+        const nomeOutro = pontoAlvo === 'responsavel' ? etapaDetalhe.executadoPor : etapaDetalhe.responsavel;
+
+        itemData['PONTO'] = pontoPrincipal;
+        itemData['PONTO_ALVO'] = nomeAlvo || '';
+        itemData['PONTO_TIPO'] = pontoAlvo;
+
+        if (nomeOutro && nomeOutro !== nomeAlvo) {
+          itemData['PONTO_OPOSTO'] = pontoOposto;
+          itemData['PONTO_OPOSTO_ALVO'] = nomeOutro;
+          itemData['PONTO_OPOSTO_TIPO'] = pontoAlvo === 'responsavel' ? 'executor' : 'responsavel';
+        }
+      }
+
+      await set(manualItemRef, itemData);
+      setEtapaDetalhe(null);
+      setPontoModal(null);
+      setPontoAlvo(null);
+      return;
+    }
+
+    // Etapa da planilha: salva no nó tabelaGoogle
+    if (etapaDetalhe._originalIndex === undefined) return;
     const tabelaRef = ref(db, `tenants/${empresaAtual.id}/tabelaGoogle`);
     const snapshot = await get(tabelaRef);
     const dataArray = [...(snapshot.val() || [])];
@@ -1245,6 +1289,7 @@ function processData(data, existingSteps = []) {
     }
 
     etapasValidadas.push({
+      ...row, // Mantém campos originais PRIMEIRO (PONTO, PONTO_ALVO, etc.)
       id: existing ? existing.id : null, // Preserva o ID para atualizar em vez de duplicar
       nome: nome,
       descricao: getVal(['Descrição', 'descricao']) || '',
@@ -1259,7 +1304,7 @@ function processData(data, existingSteps = []) {
       concluidoEm: concluidoEm || null,
       quemConcluiu: quemConcluiu || null,
       executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPor', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || '',
-      ...row // Mantém todos os campos originais da linha, incluindo PONTO, PONTO_ALVO, etc.
+      // Campos originais preservados pelo ...row acima
     });
   });
 
