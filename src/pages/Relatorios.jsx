@@ -315,6 +315,9 @@ export default function Relatorios() {
          }
       }
 
+      // Define quemConcluiu para evitar ReferenceError
+      const quemConcluiu = getVal(['quemConcluiu', 'Quem Concluiu', 'quem concluiu']) || null;
+
       etapasValidadas.push({
         ...row, // Keep original data
         nome: nome,
@@ -325,7 +328,7 @@ export default function Relatorios() {
         status: status,
         observacoes: getVal(['Observações', 'observacoes', 'Observação', 'observação', 'Observacao', 'observacao', 'Obs', 'obs', 'Comentários', 'comentarios']) || '',
         executadoPor: getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPor', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || quemConcluiu || ''
-        , ...row
+        , quemConcluiu: quemConcluiu
     });
     });
   

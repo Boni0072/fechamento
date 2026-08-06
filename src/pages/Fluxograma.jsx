@@ -1073,6 +1073,9 @@ function processData(data, existingSteps = []) {
       usedIds.add(existing.id);
     }
 
+    // Define quemConcluiu a partir do passo existente ou como nulo
+    let quemConcluiu = existing?.quemConcluiu || null;
+
     let rawOrdem = getVal(['D+', 'd+', 'Ordem', 'ordem', 'Dia', 'dia']);
     let ordem = parseInt(rawOrdem);
     if (isNaN(ordem)) ordem = index + 1;
@@ -1098,6 +1101,11 @@ function processData(data, existingSteps = []) {
     if (hasDataReal || isExplicitlyConcluido) {
         status = 'concluido';
         if (dataReal && dataPrevista && new Date(dataReal) > new Date(dataPrevista)) {
+            status = 'concluido_atraso';
+        }
+        // Se o status for concluído, mas não houver informação de quem concluiu, define um padrão.
+        if (!quemConcluiu) {
+            quemConcluiu = 'Importação';
             status = 'concluido_atraso';
         }
     } else {

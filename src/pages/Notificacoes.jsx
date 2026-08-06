@@ -914,13 +914,12 @@ function processData(data) {
 
     const responsavel = getVal(['ATRIBUÍDO PARA', 'atribuído para', 'atribuido para', 'Responsável', 'responsavel', 'Responsavel', 'Owner']) || '';
     const area = getVal(['ÁREA', 'área', 'area', 'Área']) || '';
-    const quemConcluiu = getVal(['quemConcluiu', 'Quem Concluiu', 'quem concluiu']);
+    const quemConcluiu = getVal(['quemConcluiu', 'Quem Concluiu', 'quem concluiu']) || null;
     const executadoPor = getVal(['EXECUTADO POR', 'Executado Por', 'Executado por', 'executado por', 'ExecutadoPor', 'executadoPor', 'Executor', 'executor', 'Quem executou', 'Realizado por', 'Executado p/', 'Executado P/', 'Executado']) || quemConcluiu || '';
 
     etapasValidadas.push({
-      ...row, nome, codigo, dataPrevista, dataReal, status, responsavel, area, 
-      executadoPor: executadoPor || quemConcluiu || '',
-      ...row
+      ...row, nome, codigo, dataPrevista, dataReal, status, responsavel, area, executadoPor,
+      quemConcluiu: quemConcluiu
     });
   });
 
