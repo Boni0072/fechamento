@@ -166,3 +166,119 @@ exports.getEmailFolders = functions.https.onRequest(async (request, response) =>
     });
   }
 });
+
+/**
+ * Envia e-mail de notificação usando Microsoft Graph API
+ * Esta função é chamada pelo frontend quando uma etapa é concluída
+ */
+exports.sendNotificationEmail = functions.https.onRequest(async (request, response) => {
+  // Habilita CORS para todas as origens
+  response.set("Access-Control-Allow-Origin", "*");
+  response.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+  response.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+  // Responde a preflight requests (OPTIONS)
+  if (request.method === "OPTIONS") {
+    return response.status(200).send("");
+  }
+
+  if (request.method !== "POST") {
+    return response.status(405).json({ error: "Method Not Allowed" });
+  }
+
+  try {
+    const { to, subject, body, accessToken } = request.body;
+
+    if (!to || !subject || !body) {
+      return response.status(400).json({ error: "Destinatário, assunto e corpo são obrigatórios." });
+    }
+
+    // Se não foi fornecido accessToken, tenta usar o token padrão da empresa
+    let token = accessToken;
+    if (!token) {
+      const clientId = process.env.MICROSOFT_CLIENT_ID;
+      const clientSecret = process.env.MICROSOFT_CLIENT_SECRET;
+      
+      if (!clientId || !clientSecret) {
+        return response.status(500).json({ error: "Configuração OAuth2 incompleta no servidor." });
+      }
+
+      // Aqui você pode buscar um token salvo no banco de dados
+      // Por enquanto, retorna erro solicitando o token
+      return response.status(400).json({ 
+        error: "Access token não fornecido. É necessário autenticar com o Outlook primeiro." 
+      });
+    }
+
+    // Envia o e-mail usando Microsoft Graph API
+    const emailData = {
+      message: {
+        subject: subject,
+        body: {
+          contentType: "HTML",
+          content: body
+        },
+        toRecipients: [
+          {
+            emailAddress: {
+              address: to
+            }
+          }
+        ]
+      },
+      saveToSentItems: true
+    };
+
+    // Envia requisição HTTPS para Microsoft Graph API
+    const graphResponse = await new Promise((resolve, reject) => {
+      const postData = JSON.stringify(emailData);
+      
+      const options = {
+        hostname: 'graph.microsoft.com',
+        path: '/v1.0/me/sendMail',
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(postData)
+        }
+      };
+
+      const req = https.request(options, (res) => {
+        let data = '';
+        res.on('data', (chunk) => data += chunk);
+        res.on('end', () => {
+          try {
+            const result = JSON.parse(data);
+            if (res.statusCode >= 200 && res.statusCode < 300) {
+              resolve({ ok: true, status: res.statusCode, data: result });
+            } else {
+              resolve({ ok: false, status: res.statusCode, data: result });
+            }
+          } catch (err) {
+            resolve({ ok: false, status: res.statusCode, data: { error: { message: 'Erro ao processar resposta' } } });
+          }
+        });
+      });
+
+      req.on('error', (error) => {
+        reject(error);
+      });
+
+      req.write(postData);
+      req.end();
+    });
+
+    if (!graphResponse.ok) {
+      console.error("Erro ao enviar e-mail:", graphResponse.data);
+      return response.status(500).json({ 
+        error: `Erro ao enviar e-mail: ${graphResponse.data.error?.message || 'Erro desconhecido'}` 
+      });
+    }
+
+    return response.status(200).json({ success: true, message: "E-mail enviado com sucesso!" });
+  } catch (error) {
+    console.error("Erro na função sendNotificationEmail:", error);
+    return response.status(500).json({ error: "Erro ao enviar notificação por e-mail." });
+  }
+});

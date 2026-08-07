@@ -153,6 +153,15 @@ input::placeholder {
   color: var(--text-dim);
 }
 
+/* Mantém os controles nativos de data legíveis em ambos os temas. */
+.native-date-input {
+  color-scheme: dark;
+}
+
+[data-theme="light"] .native-date-input {
+  color-scheme: light;
+}
+
 /* Buttons */
 .btn {
   display: inline-flex;

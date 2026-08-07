@@ -1,10 +1,10 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate} from 'react-router-dom';
-import { getFirestore, doc, onSnapshot, collection, getDocs, writeBatch, updateDoc, query, where, deleteDoc, setDoc } from 'firebase/firestore';
+import { getFirestore, doc, onSnapshot, collection, getDocs, writeBatch, updateDoc, query, where, deleteDoc, setDoc, getDoc } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissao } from '../hooks/usePermissao';
 import { getResponsaveis, criarEtapa, atualizarEtapa, deletarEtapa, getStatusColor, getStatusLabel } from '../services/database';
-import { Plus, X, Filter, Settings, CheckCircle, RotateCcw, Search, Pencil, Trash2 } from 'lucide-react';
+import { Plus, X, Filter, Settings, CheckCircle, RotateCcw, Search, Pencil, Trash2, Mail } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { checkPermission } from "./permissionUtils";
 
@@ -27,8 +27,14 @@ export default function Etapas() {
   const [observacaoModal, setObservacaoModal] = useState(''); // State for observation text in modal
   const [pontoModal, setPontoModal] = useState(null); // 'positivo' | 'negativo' | null
   const [pontoAlvo, setPontoAlvo] = useState(null); // 'responsavel' | 'executor' | null
+  const [notificacaoModal, setNotificacaoModal] = useState(null); // Etapa sendo editada
+  const [emailNotificacao, setEmailNotificacao] = useState('');
+  const [usuarios, setUsuarios] = useState([]);
+  const [loadingUsuarios, setLoadingUsuarios] = useState(false);
   const [filtros, setFiltros] = useState({ area: '', responsavel: '', status: '' });
+  const [nomeNotificacao, setNomeNotificacao] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [filtroData, setFiltroData] = useState({ inicio: '', fim: '' });
   const [loadingData, setLoadingData] = useState(false);
 
   const empresasParaBuscar = useMemo(() => {
@@ -47,7 +53,8 @@ export default function Etapas() {
     dataPrevista: '',
     dataReal: '',
     ordem: 1,
-    observacoes: ''
+    observacoes: '',
+    usuarioNotificacao: ''
   });
 
   useEffect(() => {
@@ -244,9 +251,180 @@ export default function Etapas() {
           concluidoEm: processedItem.concluidoEm
         }, { merge: true });
       }
+
+      // 3. Enviar e-mail de notificação se a etapa foi concluída
+      const novoStatus = (itemToUpdate.status || itemToUpdate['STATUS'] || '').toLowerCase();
+      console.log('🔍 Debug envio e-mail:', {
+        novoStatus,
+        usuarioNotificacao: itemToUpdate.usuarioNotificacao,
+        deveEnviar: novoStatus.includes('conclu') && itemToUpdate.usuarioNotificacao
+      });
+      
+      if (novoStatus.includes('conclu') && itemToUpdate.usuarioNotificacao) {
+        console.log('📧 Enviando e-mail de notificação para:', itemToUpdate.usuarioNotificacao);
+        enviarEmailNotificacao(itemToUpdate);
+      } else {
+        console.log('⚠️ Não enviando e-mail. Status:', novoStatus, 'Usuário:', itemToUpdate.usuarioNotificacao);
+      }
     } catch (error) {
       console.error("Erro ao concluir etapa:", error);
       alert("Ocorreu um erro ao tentar atualizar a etapa.");
+    }
+  };
+
+  const enviarEmailNotificacao = async (etapa) => {
+    console.log('📧 Iniciando envio de e-mail...');
+    console.log('📧 Dados da etapa:', {
+      nome: etapa.nome,
+      usuarioNotificacao: etapa.usuarioNotificacao,
+      status: etapa.status
+    });
+    
+    try {
+      const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
+      const functionUrl = `https://us-central1-${projectId}.cloudfunctions.net/sendNotificationEmail`;
+      
+      console.log('📧 URL da Cloud Function:', functionUrl);
+      console.log('📧 Projeto Firebase:', projectId);
+      
+      const executorName = userProfile?.nome || userProfile?.name || authUser?.name || authUser?.displayName || authUser?.email || 'Sistema';
+      
+      const subject = `Etapa Concluída: ${etapa.nome}`;
+      const body = `
+        <html>
+          <head>
+            <style>
+              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background-color: #4CAF50; color: white; padding: 20px; border-radius: 5px 5px 0 0; }
+              .content { background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; }
+              .footer { background-color: #f1f1f1; padding: 10px; text-align: center; font-size: 12px; color: #666; }
+              .info { background-color: #e3f2fd; padding: 10px; margin: 10px 0; border-left: 4px solid #2196F3; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h2>✓ Etapa Concluída</h2>
+              </div>
+              <div class="content">
+                <p>Olá!</p>
+                <p>A etapa <strong>${etapa.nome}</strong> foi concluída com sucesso.</p>
+                
+                <div class="info">
+                  <p><strong>Código:</strong> ${etapa.codigo || 'N/A'}</p>
+                  <p><strong>Responsável:</strong> ${etapa.responsavel || 'N/A'}</p>
+                  <p><strong>Executado por:</strong> ${executorName}</p>
+                  <p><strong>Data de Conclusão:</strong> ${new Date().toLocaleString('pt-BR')}</p>
+                </div>
+                
+                <p>Acesse o sistema para mais detalhes.</p>
+              </div>
+              <div class="footer">
+                <p>Esta é uma mensagem automática. Por favor, não responda.</p>
+              </div>
+            </div>
+          </body>
+        </html>
+      `;
+
+      // Buscar token de acesso do Outlook do usuário atual
+      let accessToken = null;
+      console.log('🔍 Buscando token Outlook...', { empresaAtual: empresaAtual?.id, authUser: authUser?.id });
+      
+      if (empresaAtual?.id && authUser?.id) {
+        try {
+          const db = getFirestore();
+          // Busca direto pelo documento específico do usuário
+          const tokenRef = doc(db, 'tenants', empresaAtual.id, 'outlookTokens', authUser.id);
+          const tokenSnap = await getDoc(tokenRef);
+          
+          console.log('🔍 Token snapshot:', { exists: tokenSnap.exists() });
+          
+          if (tokenSnap.exists()) {
+            const tokenData = tokenSnap.data();
+            accessToken = tokenData.accessToken;
+            console.log('✅ Token encontrado:', { hasToken: !!accessToken, tokenLength: accessToken?.length });
+          } else {
+            console.log('⚠️ Nenhum token encontrado para o usuário');
+          }
+        } catch (error) {
+          console.error("Erro ao buscar token Outlook:", error);
+        }
+      } else {
+        console.log('⚠️ Empresa ou usuário não definidos');
+      }
+
+      console.log('📧 Enviando requisição para Cloud Function...', {
+        to: etapa.usuarioNotificacao,
+        subject: subject,
+        hasAccessToken: !!accessToken
+      });
+
+      const response = await fetch(functionUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          to: etapa.usuarioNotificacao,
+          subject: subject,
+          body: body,
+          accessToken: accessToken
+        })
+      });
+
+      console.log('📧 Resposta recebida:', { status: response.status, ok: response.ok });
+
+      const result = await response.json();
+      
+      console.log('📧 Resultado:', result);
+      
+      if (response.ok) {
+        console.log("✅ E-mail de notificação enviado com sucesso:", result);
+      } else {
+        console.error("❌ Erro ao enviar e-mail de notificação:", result);
+        // Não mostra erro para o usuário, apenas loga
+      }
+    } catch (error) {
+      console.error("❌ Erro ao enviar e-mail de notificação:", error);
+      // Não mostra erro para o usuário, apenas loga
+    }
+  };
+
+  // Função de teste para verificar se a Cloud Function está deployada
+  const testarCloudFunction = async () => {
+    console.log('🧪 Testando Cloud Function...');
+    const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
+    const functionUrl = `https://us-central1-${projectId}.cloudfunctions.net/sendNotificationEmail`;
+    
+    try {
+      const response = await fetch(functionUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          to: 'teste@exemplo.com',
+          subject: 'Teste',
+          body: '<p>Teste</p>',
+          accessToken: null
+        })
+      });
+      
+      console.log('🧪 Resultado do teste:', {
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok
+      });
+      
+      const result = await response.json();
+      console.log('🧪 Resposta:', result);
+      
+      alert(`Teste concluído!\nStatus: ${response.status}\nResultado: ${JSON.stringify(result, null, 2)}`);
+    } catch (error) {
+      console.error('🧪 Erro no teste:', error);
+      alert(`Erro no teste: ${error.message}`);
     }
   };
 
@@ -363,7 +541,8 @@ export default function Etapas() {
         dataPrevista: form.dataPrevista || new Date().toISOString(),
         dataReal: form.dataReal || '',
         ordem: form.ordem || etapas.length + 1,
-        observacoes: form.observacoes || ''
+        observacoes: form.observacoes || '',
+        usuarioNotificacao: form.usuarioNotificacao || ''
       };
 
       const rtdb = getDatabase();
@@ -431,7 +610,8 @@ export default function Etapas() {
       dataPrevista: etapa.dataPrevista || '',
       dataReal: etapa.dataReal || '',
       ordem: etapa.ordem || 1,
-      observacoes: etapa.observacoes || ''
+      observacoes: etapa.observacoes || '',
+      usuarioNotificacao: etapa.usuarioNotificacao || ''
     });
     setShowModal(true);
   };
@@ -464,6 +644,62 @@ export default function Etapas() {
     }
   };
 
+  const handleAbrirNotificacao = async (etapa) => {
+    setNotificacaoModal(etapa);
+    setEmailNotificacao(etapa.usuarioNotificacao || '');
+    setNomeNotificacao(etapa.nomeNotificacao || '');
+    
+    // Buscar usuários da empresa
+    if (empresaAtual?.id && usuarios.length === 0) {
+      setLoadingUsuarios(true);
+      try {
+        const db = getFirestore();
+        const usuariosRef = collection(db, 'tenants', empresaAtual.id, 'usuarios');
+        const snapshot = await getDocs(usuariosRef);
+        let usuariosData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })).filter(u => u.email); // Apenas usuários com e-mail
+        
+        // Ordenar A-Z por nome ou email
+        usuariosData.sort((a, b) => {
+          const nomeA = (a.nome || a.email || '').toLowerCase().trim();
+          const nomeB = (b.nome || b.email || '').toLowerCase().trim();
+          return nomeA.localeCompare(nomeB, 'pt-BR');
+        });
+        
+        setUsuarios(usuariosData);
+      } catch (error) {
+        console.error("Erro ao buscar usuários:", error);
+      } finally {
+        setLoadingUsuarios(false);
+      }
+    }
+  };
+
+  const handleSalvarNotificacao = async () => {
+    if (!notificacaoModal || !empresaAtual?.id) return;
+
+    const db = getDatabase();
+    const itemRef = notificacaoModal._fonte === 'manual' && notificacaoModal._idManual
+      ? ref(db, `tenants/${empresaAtual.id}/etapasManuais/${notificacaoModal._idManual}`)
+      : ref(db, `tenants/${empresaAtual.id}/tabelaGoogle/${notificacaoModal._originalIndex}`);
+
+    try {
+      await set(itemRef, {
+        ...notificacaoModal,
+        usuarioNotificacao: emailNotificacao,
+        nomeNotificacao: nomeNotificacao
+      });
+      setNotificacaoModal(null);
+      setEmailNotificacao('');
+      setNomeNotificacao('');
+    } catch (error) {
+      console.error("Erro ao salvar notificação:", error);
+      alert("Erro ao salvar notificação. Tente novamente.");
+    }
+  };
+
   const etapasFiltradas = etapas.filter(etapa => {
     if (periodoSelecionado?.id !== 'todos') {
       const dataPrevista = new Date(etapa.dataPrevista);
@@ -480,6 +716,20 @@ export default function Etapas() {
         return false;
       }
     }
+    if (filtroData.inicio || filtroData.fim) {
+      if (!etapa.dataPrevista) return false;
+      const dataEtapa = new Date(etapa.dataPrevista);
+      const dataStr = dataEtapa.toISOString().split('T')[0];
+
+      if (filtroData.inicio) {
+        const dataInicioUTC = new Date(filtroData.inicio + 'T00:00:00.000Z').toISOString().split('T')[0];
+        if (dataStr < dataInicioUTC) return false;
+      }
+      if (filtroData.fim) {
+        const dataFimUTC = new Date(filtroData.fim + 'T00:00:00.000Z').toISOString().split('T')[0];
+        if (dataStr > dataFimUTC) return false;
+      }
+    }
     return true;
   });
 
@@ -493,7 +743,7 @@ export default function Etapas() {
           </div>
         </div>
         
-        <div className="flex gap-3">
+      <div className="flex gap-3">
           <div className="period-filter-group">
             <span className="period-filter-label">Período</span>
             <select
@@ -535,14 +785,25 @@ export default function Etapas() {
                 observacoes: ''
               });
               setShowModal(true);
-          }}
-          disabled={viewAllCompanies} // Criação só permitida em empresa específica
+            }}
+            disabled={viewAllCompanies}
             className={`btn btn-primary ${viewAllCompanies ? 'opacity-50 cursor-not-allowed' : ''}`}
             title={viewAllCompanies ? "Selecione uma empresa específica para criar etapas" : "Criar nova etapa"}
           >
             <Plus className="w-4 h-4" />
             <span className="hidden sm:inline">Nova Etapa</span>
           </button>
+
+          {/* Botão de teste da Cloud Function (apenas para debug) */}
+          {import.meta.env.DEV && (
+            <button
+              onClick={testarCloudFunction}
+              className="btn btn-secondary !p-2"
+              title="Testar envio de e-mail (Debug)"
+            >
+              <Mail className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -560,6 +821,24 @@ export default function Etapas() {
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="form-input w-full max-w-xs pl-9 text-sm"
+            />
+          </div>
+          
+          <div className="flex items-center gap-1">
+            <input
+              type="date"
+              value={filtroData.inicio}
+              onChange={(e) => setFiltroData({ ...filtroData, inicio: e.target.value })}
+              className="form-input native-date-input text-sm"
+              title="Data Início"
+            />
+            <span className="text-slate-400">-</span>
+            <input
+              type="date"
+              value={filtroData.fim}
+              onChange={(e) => setFiltroData({ ...filtroData, fim: e.target.value })}
+              className="form-input native-date-input text-sm"
+              title="Data Fim"
             />
           </div>
           
@@ -610,9 +889,9 @@ export default function Etapas() {
               <th className="table-header">Status</th>
               <th className="table-header text-center">Ações</th>
               {viewAllCompanies && <th className="table-header">Empresa</th>}
-              <th className="table-header">Área</th>
               <th className="table-header">Responsável</th>
               <th className="table-header">Executado Por</th>
+              <th className="table-header">Notificar</th>
               <th className="table-header">Data Prevista</th>
               <th className="table-header">Hora Prevista</th>
               <th className="table-header">Data Real</th>
@@ -622,7 +901,7 @@ export default function Etapas() {
           <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
             {etapasFiltradas.length === 0 ? (
               <tr>
-                <td colSpan={12} className="px-4 py-8 text-center" style={{ color: 'var(--text-muted)' }}>
+                <td colSpan={11} className="px-4 py-8 text-center" style={{ color: 'var(--text-muted)' }}>
                   Nenhuma etapa encontrada
                 </td>
               </tr>
@@ -681,9 +960,30 @@ export default function Etapas() {
                     </div>
                   </td>
                   {viewAllCompanies && <td className="table-cell">{etapa.empresaNome}</td>}
-                  <td className="table-cell">{etapa.area || '-'}</td>
                   <td className="table-cell">{etapa.responsavel || '-'}</td>
                   <td className="table-cell">{etapa.executadoPor || '-'}</td>
+                  <td className="table-cell">
+                    {etapa.nomeNotificacao ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm truncate" title={etapa.nomeNotificacao}>{etapa.nomeNotificacao}</span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleAbrirNotificacao(etapa); }}
+                          className="p-1 text-[var(--info)] hover:bg-[var(--info-soft)] rounded-full transition-colors flex-shrink-0"
+                          title="Alterar notificação"
+                        >
+                          <Mail className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleAbrirNotificacao(etapa); }}
+                        className="p-2 text-[var(--info)] hover:bg-[var(--info-soft)] rounded-full transition-colors"
+                        title="Configurar notificação por e-mail"
+                      >
+                        <Mail className="w-4 h-4" />
+                      </button>
+                    )}
+                  </td>
                   <td className="table-cell">
                     {etapa.dataPrevista ? new Date(etapa.dataPrevista).toLocaleDateString('pt-BR') : '-'}
                   </td>
@@ -787,6 +1087,16 @@ export default function Etapas() {
                   />
                 </div>
                 
+                <div className="col-span-2">
+                  <label className="form-label">Usuário para Notificação (E-mail)</label>
+                  <input
+                    type="email"
+                    value={form.usuarioNotificacao}
+                    onChange={(e) => setForm({ ...form, usuarioNotificacao: e.target.value })}
+                    className="form-input"
+                    placeholder="email@exemplo.com"
+                  />
+                </div>
                 
                 <div className="col-span-2">
                   <label className="form-label">Observações</label>
@@ -815,6 +1125,68 @@ export default function Etapas() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Notificação */}
+      {notificacaoModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-fadeIn">
+          <div className="modal-content w-full max-w-md">
+            <div className="modal-header">
+              <h3 className="text-lg font-semibold" style={{ color: 'var(--text)' }}>
+                Configurar Notificação por E-mail
+              </h3>
+              <button onClick={() => { setNotificacaoModal(null); setEmailNotificacao(''); }} className="p-1 rounded">
+                <X className="w-5 h-5" style={{ color: 'var(--text-dim)' }} />
+              </button>
+            </div>
+            
+            <div className="modal-body">
+              <div className="mb-4">
+                <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>
+                  Selecione o usuário que receberá a notificação quando a etapa <strong>{notificacaoModal.nome}</strong> for concluída.
+                </p>
+                <label className="form-label">Usuário para Notificação</label>
+                {loadingUsuarios ? (
+                  <div className="text-sm" style={{ color: 'var(--text-muted)' }}>Carregando usuários...</div>
+                ) : (
+                  <select
+                    value={emailNotificacao}
+                    onChange={(e) => {
+                      const selectedUser = usuarios.find(u => u.email === e.target.value);
+                      setEmailNotificacao(e.target.value);
+                      setNomeNotificacao(selectedUser?.nome || selectedUser?.email || '');
+                    }}
+                    className="form-input"
+                    autoFocus
+                  >
+                    <option value="">Selecione um usuário</option>
+                    {usuarios.map(usuario => (
+                      <option key={usuario.id} value={usuario.email}>
+                        {usuario.nome || usuario.email} ({usuario.email})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  onClick={() => { setNotificacaoModal(null); setEmailNotificacao(''); }}
+                  className="btn btn-secondary flex-1"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleSalvarNotificacao}
+                  className="btn btn-primary flex-1"
+                >
+                  Salvar
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -1300,6 +1672,7 @@ function processData(data, existingSteps = []) {
       ordem: ordem,
       codigo: (codigo !== undefined && codigo !== null) ? String(codigo) : '',
       observacoes: getVal(['Observações', 'observacoes', 'Observação', 'observação', 'Observacao', 'observacao', 'OBSERVAÇÃO', 'Obs', 'obs']) || '',
+      usuarioNotificacao: getVal(['USUARIO_NOTIFICACAO', 'usuarioNotificacao', 'Usuário Notificação', 'Usuario Notificacao', 'Notificar', 'notificar']) || '',
       status: status,
       concluidoEm: concluidoEm || null,
       quemConcluiu: quemConcluiu || null,
