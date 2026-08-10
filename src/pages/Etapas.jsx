@@ -7,6 +7,8 @@ import { getResponsaveis, criarEtapa, atualizarEtapa, deletarEtapa, getStatusCol
 import { Plus, X, Filter, Settings, CheckCircle, RotateCcw, Search, Pencil, Trash2, Mail } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { checkPermission } from "./permissionUtils";
+import { useAlert } from '../components/NotificationAlert';
+import { enviarEmailComAlertasOutlook } from '../services/emailServiceMailto';
 
 import { getDatabase, ref, onValue, get, set, push, update, remove, child } from "firebase/database";
 export default function Etapas() {
@@ -36,6 +38,9 @@ export default function Etapas() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filtroData, setFiltroData] = useState({ inicio: '', fim: '' });
   const [loadingData, setLoadingData] = useState(false);
+  
+  // Hook de alertas
+  const { alertSuccess, alertError } = useAlert();
 
   const empresasParaBuscar = useMemo(() => {
     if (empresaAtual) return [empresaAtual];
@@ -273,122 +278,15 @@ export default function Etapas() {
   };
 
   const enviarEmailNotificacao = async (etapa) => {
-    console.log('📧 Iniciando envio de e-mail...');
-    console.log('📧 Dados da etapa:', {
-      nome: etapa.nome,
-      usuarioNotificacao: etapa.usuarioNotificacao,
-      status: etapa.status
-    });
-    
     try {
-      const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
-      const functionUrl = `https://us-central1-${projectId}.cloudfunctions.net/sendNotificationEmail`;
-      
-      console.log('📧 URL da Cloud Function:', functionUrl);
-      console.log('📧 Projeto Firebase:', projectId);
-      
-      const executorName = userProfile?.nome || userProfile?.name || authUser?.name || authUser?.displayName || authUser?.email || 'Sistema';
-      
-      const subject = `Etapa Concluída: ${etapa.nome}`;
-      const body = `
-        <html>
-          <head>
-            <style>
-              body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-              .header { background-color: #4CAF50; color: white; padding: 20px; border-radius: 5px 5px 0 0; }
-              .content { background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; }
-              .footer { background-color: #f1f1f1; padding: 10px; text-align: center; font-size: 12px; color: #666; }
-              .info { background-color: #e3f2fd; padding: 10px; margin: 10px 0; border-left: 4px solid #2196F3; }
-            </style>
-          </head>
-          <body>
-            <div class="container">
-              <div class="header">
-                <h2>✓ Etapa Concluída</h2>
-              </div>
-              <div class="content">
-                <p>Olá!</p>
-                <p>A etapa <strong>${etapa.nome}</strong> foi concluída com sucesso.</p>
-                
-                <div class="info">
-                  <p><strong>Código:</strong> ${etapa.codigo || 'N/A'}</p>
-                  <p><strong>Responsável:</strong> ${etapa.responsavel || 'N/A'}</p>
-                  <p><strong>Executado por:</strong> ${executorName}</p>
-                  <p><strong>Data de Conclusão:</strong> ${new Date().toLocaleString('pt-BR')}</p>
-                </div>
-                
-                <p>Acesse o sistema para mais detalhes.</p>
-              </div>
-              <div class="footer">
-                <p>Esta é uma mensagem automática. Por favor, não responda.</p>
-              </div>
-            </div>
-          </body>
-        </html>
-      `;
-
-      // Buscar token de acesso do Outlook do usuário atual
-      let accessToken = null;
-      console.log('🔍 Buscando token Outlook...', { empresaAtual: empresaAtual?.id, authUser: authUser?.id });
-      
-      if (empresaAtual?.id && authUser?.id) {
-        try {
-          const db = getFirestore();
-          // Busca direto pelo documento específico do usuário
-          const tokenRef = doc(db, 'tenants', empresaAtual.id, 'outlookTokens', authUser.id);
-          const tokenSnap = await getDoc(tokenRef);
-          
-          console.log('🔍 Token snapshot:', { exists: tokenSnap.exists() });
-          
-          if (tokenSnap.exists()) {
-            const tokenData = tokenSnap.data();
-            accessToken = tokenData.accessToken;
-            console.log('✅ Token encontrado:', { hasToken: !!accessToken, tokenLength: accessToken?.length });
-          } else {
-            console.log('⚠️ Nenhum token encontrado para o usuário');
-          }
-        } catch (error) {
-          console.error("Erro ao buscar token Outlook:", error);
-        }
-      } else {
-        console.log('⚠️ Empresa ou usuário não definidos');
-      }
-
-      console.log('📧 Enviando requisição para Cloud Function...', {
-        to: etapa.usuarioNotificacao,
-        subject: subject,
-        hasAccessToken: !!accessToken
+      // Abre Outlook para enviar e-mail (funciona imediatamente)
+      await enviarEmailComAlertasOutlook(etapa, {
+        alertSuccess,
+        alertError
       });
-
-      const response = await fetch(functionUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          to: etapa.usuarioNotificacao,
-          subject: subject,
-          body: body,
-          accessToken: accessToken
-        })
-      });
-
-      console.log('📧 Resposta recebida:', { status: response.status, ok: response.ok });
-
-      const result = await response.json();
-      
-      console.log('📧 Resultado:', result);
-      
-      if (response.ok) {
-        console.log("✅ E-mail de notificação enviado com sucesso:", result);
-      } else {
-        console.error("❌ Erro ao enviar e-mail de notificação:", result);
-        // Não mostra erro para o usuário, apenas loga
-      }
     } catch (error) {
-      console.error("❌ Erro ao enviar e-mail de notificação:", error);
-      // Não mostra erro para o usuário, apenas loga
+      console.error('Erro ao enviar e-mail:', error);
+      alertError('❌ Erro ao abrir Outlook. Verifique se está instalado.', 5000);
     }
   };
 

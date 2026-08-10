@@ -1,0 +1,176 @@
+/* Container de notificações */
+.notification-alert {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  min-width: 300px;
+  max-width: 500px;
+  padding: 16px 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 9999;
+  cursor: pointer;
+  animation: slideInRight 0.3s ease-out;
+  color: white;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+}
+
+/* Animação de entrada */
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* Animação de saída */
+@keyframes slideOutRight {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+/* Animação de pulso para chamar atenção */
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+/* Aplicar animação de pulso em erros */
+.notification-alert.error {
+  animation: slideInRight 0.3s ease-out, pulse 0.5s ease-in-out 0.3s 2;
+}
+
+/* Conteúdo da notificação */
+.notification-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+/* Ícone da notificação */
+.notification-icon {
+  font-size: 24px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* Mensagem da notificação */
+.notification-message {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  word-wrap: break-word;
+  flex: 1;
+}
+
+/* Botão de fechar */
+.notification-close {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  font-size: 24px;
+  line-height: 1;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.2s;
+  margin-left: 12px;
+}
+
+.notification-close:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.notification-close:active {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+/* Responsividade */
+@media (max-width: 768px) {
+  .notification-alert {
+    top: 10px;
+    right: 10px;
+    left: 10px;
+    min-width: auto;
+    max-width: none;
+  }
+
+  .notification-message {
+    font-size: 13px;
+  }
+
+  .notification-icon {
+    font-size: 20px;
+  }
+}
+
+/* Estilos específicos por tipo */
+.notification-alert.success {
+  background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+}
+
+.notification-alert.error {
+  background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+}
+
+.notification-alert.warning {
+  background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);
+  color: #212529;
+}
+
+.notification-alert.warning .notification-close {
+  color: #212529;
+}
+
+.notification-alert.info {
+  background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
+}
+
+/* Efeito de brilho */
+.notification-alert::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  animation: shine 3s infinite;
+}
+
+@keyframes shine {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Sombra adicional para destacar */
+.notification-alert {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15), 0 0 20px rgba(0, 0, 0, 0.1);
+}
