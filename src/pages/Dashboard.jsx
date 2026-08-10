@@ -1035,21 +1035,21 @@ function RadarModal({ userName, allEtapas, onClose, isForExport = false }) {
 
   // Contagem de pontos positivos e negativos recebidos pelo usuário
   const pontosPositivos = allEtapas.filter(e => {
-    const pontoAlvo = String(e.pontoAlvo || '').trim().toLowerCase();
-    const pontoOpostoAlvo = String(e.pontoOpostoAlvo || '').trim().toLowerCase();
+    const pontoAlvo = String(e.PONTO_ALVO || '').trim().toLowerCase();
+    const pontoOpostoAlvo = String(e.PONTO_OPOSTO_ALVO || '').trim().toLowerCase();
     const userNameLower = String(userName).trim().toLowerCase();
-    const pontoValor = String(e.ponto || '').trim().toLowerCase();
-    const pontoOpostoValor = String(e.pontoOposto || '').trim().toLowerCase();
+    const pontoValor = String(e.PONTO || '').trim().toLowerCase();
+    const pontoOpostoValor = String(e.PONTO_OPOSTO || '').trim().toLowerCase();
     return (pontoAlvo === userNameLower && pontoValor === 'positivo') ||
            (pontoOpostoAlvo === userNameLower && pontoOpostoValor === 'positivo');
   }).length;
 
   const pontosNegativos = allEtapas.filter(e => {
-    const pontoAlvo = String(e.pontoAlvo || '').trim().toLowerCase();
-    const pontoOpostoAlvo = String(e.pontoOpostoAlvo || '').trim().toLowerCase();
+    const pontoAlvo = String(e.PONTO_ALVO || '').trim().toLowerCase();
+    const pontoOpostoAlvo = String(e.PONTO_OPOSTO_ALVO || '').trim().toLowerCase();
     const userNameLower = String(userName).trim().toLowerCase();
-    const pontoValor = String(e.ponto || '').trim().toLowerCase();
-    const pontoOpostoValor = String(e.pontoOposto || '').trim().toLowerCase();
+    const pontoValor = String(e.PONTO || '').trim().toLowerCase();
+    const pontoOpostoValor = String(e.PONTO_OPOSTO || '').trim().toLowerCase();
     return (pontoAlvo === userNameLower && pontoValor === 'negativo') ||
            (pontoOpostoAlvo === userNameLower && pontoOpostoValor === 'negativo');
   }).length;
@@ -1232,11 +1232,11 @@ function RadarModal({ userName, allEtapas, onClose, isForExport = false }) {
 
 function PontosDetalhesModal({ tipo, userName, allEtapas, onClose }) {
   const pontosFiltrados = allEtapas.filter(e => {
-    const pontoAlvo = String(e.pontoAlvo || '').trim().toLowerCase();
-    const pontoOpostoAlvo = String(e.pontoOpostoAlvo || '').trim().toLowerCase();
+    const pontoAlvo = String(e.PONTO_ALVO || '').trim().toLowerCase();
+    const pontoOpostoAlvo = String(e.PONTO_OPOSTO_ALVO || '').trim().toLowerCase();
     const userNameLower = String(userName).trim().toLowerCase();
-    const pontoValor = String(e.ponto || '').trim().toLowerCase();
-    const pontoOpostoValor = String(e.pontoOposto || '').trim().toLowerCase();
+    const pontoValor = String(e.PONTO || '').trim().toLowerCase();
+    const pontoOpostoValor = String(e.PONTO_OPOSTO || '').trim().toLowerCase();
     
     if (tipo === 'positivo') {
       return (pontoAlvo === userNameLower && pontoValor === 'positivo') ||
@@ -1279,35 +1279,34 @@ function PontosDetalhesModal({ tipo, userName, allEtapas, onClose }) {
           ) : (
             <div className="flex flex-col gap-2 p-4">
               {pontosFiltrados.map((item, idx) => {
-                const userNameLower = String(userName).trim().toLowerCase();
-                const pontoAlvo = String(item.pontoAlvo || '').trim().toLowerCase();
-                const pontoOpostoAlvo = String(item.pontoOpostoAlvo || '').trim().toLowerCase();
-                const pontoValor = String(item.ponto || '').trim().toLowerCase();
-                const pontoOpostoValor = String(item.pontoOposto || '').trim().toLowerCase();
+                const userNameLower = String(userName).trim().toLowerCase(); // eslint-disable-line
+                const pontoAlvo = String(item.PONTO_ALVO || '').trim().toLowerCase();
+                const pontoOpostoAlvo = String(item.PONTO_OPOSTO_ALVO || '').trim().toLowerCase();
+                const pontoValor = String(item.PONTO || '').trim().toLowerCase();
                 
                 const isAlvoDireto = pontoAlvo === userNameLower && pontoValor === tipo;
-                const tipoPonto = isAlvoDireto ? item.pontoTipo : item.pontoOpostoTipo;
+                const tipoPonto = isAlvoDireto ? item.PONTO_TIPO : item.PONTO_OPOSTO_TIPO;
                 const atribuidoPor = isAlvoDireto ? (item.pontoOpostoAlvo || item.pontoAlvo) : (item.pontoAlvo || item.pontoOpostoAlvo);
                 
                 return (
                   <div key={idx} className="p-3 rounded-lg" style={{ border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
                     <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium truncate" style={{ color: 'var(--text)' }}>{item.nome}</div>
-                        <div className="text-[10px] mt-1" style={{ color: 'var(--text-dim)' }}>
+                      <div className="flex-1 min-w-0 pr-2">
+                        <div className="text-base font-semibold" style={{ color: 'var(--text)' }}>{item.nome}</div>
+                        <div className="text-xs mt-1" style={{ color: 'var(--text-dim)' }}>
                           {item.codigo && <span className="font-mono mr-2">{item.codigo}</span>}
                           {item.area && <span>{item.area}</span>}
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold text-white ${getStatusColor(item.status)}`}>
+                        <span className={`text-xs px-2.5 py-1 rounded-full font-bold text-white ${getStatusColor(item.status)}`}>
                           {getStatusLabel(item.status)}
                         </span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 mt-2 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    <div className="flex items-center gap-2 mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
                       {tipoPonto && (
-                        <span className={`px-1.5 py-0.5 rounded ${tipoPonto === 'executor' ? '' : ''}`} style={{ background: tipoPonto === 'executor' ? 'rgba(245,182,77,0.1)' : 'rgba(124,156,255,0.1)' }}>
+                        <span className={`px-2 py-1 rounded-md ${tipoPonto === 'executor' ? '' : ''}`} style={{ background: tipoPonto === 'executor' ? 'rgba(245,182,77,0.1)' : 'rgba(124,156,255,0.1)' }}>
                           {tipoPonto === 'executor' ? 'Como executor' : 'Como responsável'}
                         </span>
                       )}
@@ -1315,9 +1314,9 @@ function PontosDetalhesModal({ tipo, userName, allEtapas, onClose }) {
                         <span>Atribuído por {atribuidoPor}</span>
                       )}
                     </div>
-                    {item.observacoes && (
-                      <div className="mt-1.5 text-[10px] leading-relaxed" style={{ color: 'var(--text-dim)' }}>
-                        <span className="italic">"{item.observacoes}"</span>
+                    {(item.PONTO_EXPLICACAO || item.observacoes) && ( // eslint-disable-line
+                      <div className="mt-2 text-sm leading-relaxed" style={{ color: 'var(--text-dim)' }}>
+                        <span className="italic">"{item.PONTO_EXPLICACAO || item.observacoes}"</span>
                       </div>
                     )}
                   </div>

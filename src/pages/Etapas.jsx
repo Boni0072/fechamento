@@ -29,6 +29,8 @@ export default function Etapas() {
   const [observacaoModal, setObservacaoModal] = useState(''); // State for observation text in modal
   const [pontoModal, setPontoModal] = useState(null); // 'positivo' | 'negativo' | null
   const [pontoAlvo, setPontoAlvo] = useState(null); // 'responsavel' | 'executor' | null
+  const [explicacaoPonto, setExplicacaoPonto] = useState(''); // Explanation for the point
+  const [pontoExplicacao, setPontoExplicacao] = useState(''); // New state for point explanation
   const [notificacaoModal, setNotificacaoModal] = useState(null); // Etapa sendo editada
   const [emailNotificacao, setEmailNotificacao] = useState('');
   const [usuarios, setUsuarios] = useState([]);
@@ -81,6 +83,7 @@ export default function Etapas() {
     // Sync observation text when a detail modal is opened
     if (etapaDetalhe) {
       setObservacaoModal(etapaDetalhe.observacoes || '');
+      setPontoExplicacao(etapaDetalhe.PONTO_EXPLICACAO || ''); // Load existing explanation
     }
   }, [etapaDetalhe]);
 
@@ -358,6 +361,7 @@ export default function Etapas() {
       setEtapaDetalhe(null);
       setPontoModal(null);
       setPontoAlvo(null);
+      setPontoExplicacao('');
       return;
     }
 
@@ -385,12 +389,14 @@ export default function Etapas() {
         dataArray[etapaDetalhe._originalIndex]['PONTO_OPOSTO_ALVO'] = nomeOutro;
         dataArray[etapaDetalhe._originalIndex]['PONTO_OPOSTO_TIPO'] = pontoAlvo === 'responsavel' ? 'executor' : 'responsavel';
       }
+      dataArray[etapaDetalhe._originalIndex]['PONTO_EXPLICACAO'] = pontoExplicacao; // Save explanation
     }
     
     await set(tabelaRef, dataArray);
     setEtapaDetalhe(null); // Close modal
     setPontoModal(null);
     setPontoAlvo(null);
+    setPontoExplicacao('');
   };
 
   const formatDateForInput = (isoDate) => {
@@ -1300,6 +1306,20 @@ export default function Etapas() {
                       {!etapaDetalhe.responsavel && !etapaDetalhe.executadoPor && (
                         <span className="text-xs" style={{ color: 'var(--text-dim)' }}>Nenhum responsável ou executor definido</span>
                       )}
+                    </div>
+                  )}
+
+                  {/* Explanation for the point */}
+                  {pontoModal && (
+                    <div className="mt-3">
+                      <label className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Explicação do Ponto:</label>
+                      <textarea
+                        value={pontoExplicacao}
+                        onChange={(e) => setPontoExplicacao(e.target.value)}
+                        className="form-input w-full mt-1"
+                        rows={2}
+                        placeholder="Descreva o motivo do ponto positivo/negativo..."
+                      />
                     </div>
                   )}
                 </div>
